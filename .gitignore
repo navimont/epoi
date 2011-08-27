@@ -1,0 +1,2 @@
+# ignore packages in jslib (like OpenLayers or jQuery)
+jslib

@@ -1,0 +1,1055 @@
+<!DOCTYPE html>
+<html><head>
+<title>Amenity Editor for OpenStreetMap</title>
+<meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+<meta name="description" content="Simple online editing tool for amenities/POIs in the OpenStreetMap." lang="en">
+<meta name="keywords" content="osm, openstreetmap, amenity, editor, poi, pois, form" lang="en">
+<meta name="description" content="Einfaches Online Werkzeug um Amenity/POIs Knoten in OpenStreetMap zu bearbeiten." lang="de">
+<meta name="keywords" content="osm, openstreetmap, amenity, editor, poi, pois, formular" lang="de">
+<meta name="author" content="GrundID GmbH, www.grundid-gmbh.de">
+
+<link rel="StyleSheet" type="text/css" href="osmsurround_files/stylesheet.css" media="screen">
+<link rel="icon" type="image/png" href="http://ae.osmsurround.org/ae/favicon.png">
+<script src="osmsurround_files/OpenLayers.js" type="text/javascript"></script>
+<script src="osmsurround_files/OpenStreetMap.js" type="text/javascript"></script>
+<script src="osmsurround_files/prototype-1.js" type="text/javascript"></script>
+<script src="osmsurround_files/scriptaculous.js" type="text/javascript"></script><script type="text/javascript" src="osmsurround_files/effects.js"></script><script type="text/javascript" src="osmsurround_files/controls.js"></script>
+<script src="osmsurround_files/ae.js" type="text/javascript"></script>
+
+<script type="text/javascript">
+
+		var MSG = {
+			buttonStopCreating : 'Stop creating',
+			buttonCreateNode : 'Create new node', 
+			templateInfo : 'Choose a template for the new node',  
+			ebOsmButton : 'Refresh from OSM', 
+			ebOsmButtonTitle : 'Loads fresh data from OSM server for this node', 
+			ebMoveButton : 'Move', 
+			ebDeleteButton : 'Delete', 
+			ebSaveButton : 'Save', 
+			ebCloseButton : 'Close'
+		};
+
+		var URL = {
+			search : "/ae/search",
+			amenity : "/ae/amenity",
+			acKey : "/ae/ac/key",
+			acValue: "/ae/ac/value",
+			osmUpdate : "/ae/osmBBoxUpdate",
+			templates : "/ae/templates"
+		};
+
+		var keyValueTemplates = {
+
+		};
+		
+        var wizardData = { 
+
+		};
+
+        var map;
+        var layerMapnik = new OpenLayers.Layer.OSM.Mapnik("Mapnik");
+
+		var idCounter = 0;
+		var addNewNode = false;
+		var movingNode = false;	
+		var MIN_ZOOM_FOR_EDIT = 14;
+		var MAX_ZOOM = 18;
+
+		var contextPath = '';
+
+		var oauthTokensAvailable = false;
+		
+
+
+        OpenLayers.Control.Click = OpenLayers.Class(OpenLayers.Control, {
+            defaultHandlerOptions: {
+                'single': true,
+                'double': false,
+                'pixelTolerance': 0,
+                'stopSingle': false,
+                'stopDouble': false
+            },
+            initialize: function(options) {
+                this.handlerOptions = OpenLayers.Util.extend(
+                    {}, this.defaultHandlerOptions
+                );
+                OpenLayers.Control.prototype.initialize.apply(
+                    this, arguments
+                );
+                this.handler = new OpenLayers.Handler.Click(
+                    this, {
+                        'click': this.trigger
+                    }, this.handlerOptions
+                );
+            },
+            trigger: function(e) {
+                try
+                {
+					if (addNewNode)
+					{
+						AE.removeNewAmenityFeature();
+						var lonlat = map.getLonLatFromViewPortPx(e.xy);
+						
+						var amenity = new Amenity(x2lon(lonlat.lon),y2lat(lonlat.lat));
+						
+						var feature = AE.createFeature(amenity);
+						feature.popupClicked = true;
+						AE.layerNew.addMarker(feature.marker);
+						AE.newAmenityFeature = feature;
+					}
+					if (AE.isMoving())
+					{
+						AE.removeNewAmenityFeature();
+						var lonlat = map.getLonLatFromViewPortPx(e.xy);
+
+						AE.movingAmenity.node.newLon = x2lon(lonlat.lon);
+						AE.movingAmenity.node.newLat = y2lat(lonlat.lat); 
+
+						var feature = AE.createFeature(AE.movingAmenity,true);
+						feature.popupClicked = true;
+						AE.layerNew.addMarker(feature.marker);
+						AE.newAmenityFeature = feature;
+					}
+				}
+				catch (e)
+				{
+					alert(e);
+				}
+              }
+              
+            
+          });
+		
+
+        function switchAdding()
+        {
+        	addNewNode = !addNewNode;
+        	$("newNodeButton").value = addNewNode ? MSG.buttonStopCreating : MSG.buttonCreateNode; 
+        	if (!addNewNode)
+        	{
+        		AE.removeNewAmenityFeature();
+        	}
+
+        }
+
+        function Amenity(lon,lat)
+        {
+			this.node = new Object();
+			this.node.id = 0;
+			this.node.lon = lon;
+			this.node.lat = lat;
+			this.keyValues = new Object();
+			this.keyValues["amenity"] = "";
+        }
+
+        function plusfacteur(a) { return a * (20037508.34 / 180); }
+        function moinsfacteur(a) { return a / (20037508.34 / 180); }
+        function y2lat(a) { return 180/Math.PI * (2 * Math.atan(Math.exp(moinsfacteur(a)*Math.PI/180)) - Math.PI/2); }
+        function lat2y(a) { return plusfacteur(180/Math.PI * Math.log(Math.tan(Math.PI/4+a*(Math.PI/180)/2))); }
+        function x2lon(a) { return moinsfacteur(a); }
+        function lon2x(a) { return plusfacteur(a); }
+        function lonLatToMercator(ll) {
+          return new OpenLayers.LonLat(lon2x(ll.lon), lat2y(ll.lat));
+        }
+        
+        
+        function init()
+        {
+
+			new Ajax.Request(URL.templates, {
+		  		  method: 'get', 
+		  		  onSuccess: function(transport) {
+		  		  	var jsonData = transport.responseJSON;
+
+			  		  keyValueTemplates = jsonData.keyValueTemplates;
+			  		  wizardData = jsonData.wizardData;
+		  		  	
+		  		  }
+		  		});
+            
+
+	        	map = new OpenLayers.Map('map', {
+	                    maxExtent: new OpenLayers.Bounds(-20037508,-20037508,20037508,20037508),
+	                    restrictedExtent: new OpenLayers.Bounds(-20037508,-20037508,20037508,20037508),
+	                      numZoomLevels: 18,
+	                      displayProjection: new OpenLayers.Projection("EPSG:4326"),
+	                      units: 'm'
+	                     });
+	
+	            AE.init(map, contextPath);
+	            layerMapnik.attribution = null;
+	            map.addLayers([layerMapnik, AE.layerNew, AE.layerMarkers]);
+	            map.addControl(new OpenLayers.Control.LayerSwitcher());
+	            map.addControl(new OpenLayers.Control.ScaleLine());
+	            map.addControl(new OpenLayers.Control.Permalink());
+	            map.addControl(new OpenLayers.Control.MousePosition());
+	            var panel = new OpenLayers.Control.Panel();
+
+	            map.setCenter(lonLatToMercator(new OpenLayers.LonLat(9.98,51.15)), 8); 
+	            map.events.register('moveend', map, updateAmenities);
+	            map.events.register('zoomend', map, updateZoomStatus);
+	
+	            var click = new OpenLayers.Control.Click();
+	            map.addControl(click);
+	            click.activate();
+	
+	            loadSettingsFromCookie();
+	            updateZoomStatus();
+	            updateAmenities(null);
+        }
+
+        function autoCompleteCallBack(inputField, queryString)
+        {
+            var prev = inputField.previousSiblings();
+            var keyValue = "";
+            for (var x = 0; x < prev.length;x++)
+            {
+				var elem = prev[x];
+				if (elem.tagName == "INPUT")
+				{
+					keyValue = elem.value;
+					break;
+				}
+					
+            }
+			return queryString+"&key="+keyValue;
+        }
+
+        var extWest = 0;
+        var extEast = 0;
+        var extNorth = 0;
+        var extSouth = 0;        
+
+        function updateAmenities(event,url,forceUpdate) 
+        {
+			if (AE.isMoving())
+				return;
+			
+        	url = url || URL.search;
+			var coords = map.getCenter();
+			var lon = x2lon(coords.lon);
+			var lat = y2lat(coords.lat);
+			var zoom = map.getZoom();
+			if (zoom > MIN_ZOOM_FOR_EDIT)
+			{
+			
+				var bounds = map.getExtent().toArray();
+				var south = y2lat(bounds[1]);
+				var north = y2lat(bounds[3]);
+				var west = x2lon(bounds[0]);
+				var east = x2lon(bounds[2]);
+
+				if (forceUpdate || (extWest > west || extEast < east || extSouth > south || extNorth < north) || (url != URL.search))
+				{
+					south = extSouth = (Math.floor(south*100)/100)-0.015;
+					north = extNorth = (Math.ceil(north*100)/100)+0.015;
+					west = extWest = (Math.floor(west*100)/100)-0.015;
+					east = extEast = (Math.ceil(east*100)/100)+0.015;
+					
+					var params = $("filterform").serialize(true);
+					params["north"] = north;
+					params["south"] = south;
+					params["west"] = west;
+					params["east"] = east;
+					delete params["saveincookie"];
+					
+					$("loading").show();
+
+					new Ajax.Request(url, {
+				  		  method: 'get', parameters : params, 
+				  		  onSuccess: function(transport) {
+				  		  	var jsonData = transport.responseJSON;
+				  		  	if (jsonData.message)
+				  		  	{
+					  		  	$("loading").hide();					  		  	
+					  		  	alert(jsonData.message);
+				  		  	}
+				  		  	else
+								AE.refreshAmenities(jsonData);
+				  		  }
+				  		});
+				}
+			}
+		}
+
+        function createKeyValueTable(amenity)
+        {
+            var nodeId = amenity.node.id;
+
+            var formTag = new Element("form",{"id":"form_"+nodeId,"action":URL.amenity,"method":"post"});
+            formTag.insert(new Element("input",{"type":"hidden","name":"_nodeId","value":nodeId}));
+            formTag.insert(new Element("input",{"type":"hidden","name":"lon","value":amenity.node.lon}));
+            formTag.insert(new Element("input",{"type":"hidden","name":"lat","value":amenity.node.lat}));
+            if (amenity.node.newLon && amenity.node.newLat)
+            {
+                formTag.insert(new Element("input",{"type":"hidden","name":"newlon","value":amenity.node.newLon}));
+	            formTag.insert(new Element("input",{"type":"hidden","name":"newlat","value":amenity.node.newLat}));
+            }   
+            formTag.insert(new Element("input",{"type":"hidden","name":"_method","value":nodeId > 0 ? "put" : "post"}));
+
+			for (var key in amenity.keyValues)
+			{
+				var keyId = "k_"+(idCounter)+"_"+nodeId;
+				var valueId = "v_"+(idCounter++)+"_"+nodeId;
+				formTag.insert(createTagValue(nodeId, key, amenity.keyValues[key]));
+			}
+
+			return formTag;
+        }
+
+        function updateKeyValueTable(nodeId)
+        {
+			var params = new Object();
+			params["nodeId"] = nodeId;
+
+        	new Ajax.Request(URL.amenity, {
+      		  method: 'get', parameters : params, 
+      		  onSuccess: function(transport) {
+                createEditBox($("amenity_"+transport.responseJSON.node.id), transport.responseJSON);
+                alert("OK");
+      		  }
+      		});
+
+        }
+
+        function createLinkIcon(iconName, url, title)
+        {
+        	var elem = new Element("a",{"href":url,target:"_blank","class":"ae-url-icon"});
+	    	elem.insert(new Element("img",{src: contextPath+"/img/icons/"+iconName,"title":title}));
+	    	return elem;
+        }
+
+        function createTagValue(nodeId, key, value)
+        {
+			var keyId = "k_"+(idCounter)+"_"+nodeId;
+			var valueId = "v_"+(idCounter++)+"_"+nodeId;
+			var keyIdChoices = keyId+"_choices";
+            var newDiv = new Element("div");
+			newDiv.insert(new Element("input", {type:"text", id:keyId , name: "key", "class":"inputkey", size:24, "value":key}));	
+			newDiv.insert(new Element("div", {id: keyIdChoices, "class":"autocomplete"}));
+			newDiv.insert(new Element("script").update("new Ajax.Autocompleter('"+keyId+"', '"+keyId+"_choices', '"+URL.acKey+"', {paramName: 'input', method: 'get', minChars: 1, frequency: 0.5});"));
+			newDiv.insert(new Element("span").update("&nbsp;"));
+			var valueInput = new Element("input", {type:"text", id:valueId, name: "value", "class":"inputvalue", size:32, "value":value});
+			newDiv.insert(valueInput);
+			if (key == "url" && value != "")
+			{
+				newDiv.insert(createLinkIcon("world.png",value,"Show URL"));				
+			}
+			if ((key == "amenity") || (key == "shop"))
+			{
+				newDiv.insert(createLinkIcon("anchor.png","http://wiki.openstreetmap.org/wiki/Tag:"+key+"="+value,"Show Wiki"));
+			}
+			newDiv.insert(new Element("div", {id:valueId+"_choices", "class":"autocomplete"}));
+			newDiv.insert(new Element("script").update("new Ajax.Autocompleter('"+valueId+"', '"+valueId+"_choices', '"+URL.acValue+"', {paramName: 'input', method: 'get', minChars: 1, frequency: 0.5, callback:autoCompleteCallBack});"));
+
+			return newDiv;
+        }
+
+        function addTag(nodeId)
+        {
+			var keyId = "k_"+(idCounter)+"_"+nodeId;
+			var newDiv = $("form_"+nodeId).insert(createTagValue(nodeId, "", ""));
+			$(keyId).focus();
+        }
+
+        function addTags(nodeId, tags)
+        {
+            if (tags[""] == "")	// adding an empty key value pair?
+            {
+                addTag(nodeId);
+            }
+            else
+            {
+            var firstKey = null;
+            var amenity = AE.getAmenity(nodeId);
+			for (var key in tags)
+			{
+				if ((amenity) && (amenity.keyValues[key] == null))
+				{
+		        	if (firstKey == null)
+			        	firstKey = "v_"+(idCounter)+"_"+nodeId;
+					var newDiv = $("form_"+nodeId).insert(createTagValue(nodeId, key, tags[key]));
+					amenity.keyValues[key] = tags[key];
+				}
+			}
+			if (firstKey)
+				$(firstKey).focus();
+            }
+        }
+
+        
+
+        function createAddTagIcon(nodeId, iconUrl, iconTitle, tags)
+        {
+        	var elem = new Element("a",{"href":"#","class":"ae-add-tag-icon",onclick:"addTags('"+nodeId+"',"+Object.toJSON(tags)+")"});
+        	elem.insert(new Element("img",{"src":iconUrl,"title":iconTitle}));
+        	return elem;
+        }
+
+
+        function createNewAmenityWizard(amenity)
+        {
+            var nodeId = amenity.node.id;
+        	var elem = new Element("div");
+        	elem.insert(new Element("div",{"class":"ae-simple-text"}).update(MSG.templateInfo));
+
+			for (var key in wizardData)
+			{
+				elem.insert(new Element("a",{"href":"#","class":"ae-create-amenity",onclick:"addDefaultTags('"+nodeId+"',"+Object.toJSON(wizardData[key])+")"}).update(key));
+			}
+        	
+        	return elem;			
+        }
+
+        function addDefaultTags(nodeId, tags)
+        {
+            var amenity = AE.getAmenity(nodeId);
+            amenity.keyValues = new Object();
+            Object.extend(amenity.keyValues,tags);
+            $("keyvaluetab_"+nodeId).update(createKeyValueTable(amenity));
+            $("naw_"+nodeId).hide();
+            $("keyvaluetab_"+nodeId).show();
+            $("form_"+nodeId).focusFirstElement();
+            
+        }
+
+        function createTitleDiv(amenity)
+        {
+            var div = new Element("div",{"class":"ae-nodedetails"});
+            if (amenity.node.id != 0)
+	            div.insert(new Element("a",{"href":"http://www.openstreetmap.org/browse/node/"+amenity.node.id,"target":"_blank"}).update("Id: "+amenity.node.id));
+            else
+                div.insert("New Node");
+            div.insert(" lon: "+amenity.node.lon+" lat: "+amenity.node.lat);
+            return div;
+        }
+
+        function createEditBox(newDiv, amenity, feature)
+        {
+			newDiv.update(new Element("div",{"class":"ae-nodename"}).update("Node name: "+amenity.name));
+			newDiv.insert(createTitleDiv(amenity));
+			var editArea = new Element("div",{"class":"ae-editarea"});
+			var keyValueTab = new Element("div",{"class":"ae-keyvaluetab","id":"keyvaluetab_"+amenity.node.id}).update(createKeyValueTable(amenity));
+			if (amenity.node.id == 0)
+			{
+				keyValueTab.hide();
+				var newAmenityWizard = new Element("div",{"class":"ae-keyvaluetab","id":"naw_"+amenity.node.id}).update(createNewAmenityWizard(amenity));
+				editArea.insert(newAmenityWizard);
+			}
+			editArea.insert(keyValueTab);
+			newDiv.insert(editArea);
+
+			var buttonDiv1 = new Element("div",{"class":"ae-buttons-top"});
+
+			for (var x = 0; x < keyValueTemplates.length;x++)
+			{
+				var template = keyValueTemplates[x];
+				buttonDiv1.insert(createAddTagIcon(amenity.node.id,contextPath+template.iconUrl,
+						template.iconTitle,template.tags));
+			}
+
+			newDiv.insert(buttonDiv1); 
+
+			var buttonDiv = new Element("div",{"class":"ae-buttons"});
+			var updateOsmButton = new Element("input",{"type":"button","class":"ae-edit-button","value":MSG.ebOsmButton,"title":MSG.ebOsmButtonTitle,"onclick":"updateKeyValueTable("+amenity.node.id+")"});
+			if ((amenity.node.id == 0) || AE.isMoving())
+				updateOsmButton.setAttribute("disabled","disabled");
+			buttonDiv.insert(updateOsmButton);
+
+			var moveButton = new Element("input",{type:"button","class":"ae-edit-button",value:MSG.ebMoveButton,onclick:"moveAmenity("+amenity.node.id+")"});
+			if ((amenity.node.id == 0) || AE.isMoving())
+				moveButton.setAttribute("disabled","disabled");
+			buttonDiv.insert(moveButton);
+
+			var deleteButton = new Element("input",{type:"button","class":"ae-edit-button",value:MSG.ebDeleteButton,onclick:"deleteAmenity("+amenity.node.id+")"});
+			if ((amenity.node.id == 0) || AE.isMoving())
+				deleteButton.setAttribute("disabled","disabled");
+			buttonDiv.insert(deleteButton);
+			buttonDiv.insert(new Element("input",{type:"button","class":"ae-edit-button",value:MSG.ebSaveButton,onclick:"saveAmenity("+amenity.node.id+")"}));
+			var closeButton = new Element("input",{type:"button","class":"ae-edit-button",value:MSG.ebCloseButton});
+			buttonDiv.insert(closeButton);			
+
+   			var closeIcon = new Element("div",{"class":"ae-closeicon"});
+			closeIcon.update(new Element("a",{"href":"#"}));
+			buttonDiv.insert(closeIcon);
+			newDiv.insert(buttonDiv);   
+			closeIcon.observe('click', AE.closePopupHandler.bindAsEventListener(amenity));
+			closeButton.observe('click', AE.closePopupHandler.bindAsEventListener(amenity));
+        }
+
+        function checkboxesChanged(cbs)
+        {
+        	for (var x = 0; x < cbs.length;x++)
+        	{
+				if (cbs[x].defaultChecked != cbs[x].checked)
+				{
+					return true;
+				}
+        	}
+        	return false;
+        }
+
+        function saveFilterSettings()
+        {
+        	$('filter').hide();
+
+        	var f = $('filterform');
+
+        	if (f.lon.value)
+            	f.lon.value = f.lon.value.replace(/,/,".");
+        	if (f.lat.value)
+            	f.lat.value = f.lat.value.replace(/,/,".");
+        	
+        	var filterChanged = checkboxesChanged(f.getInputs("checkbox","show")) || checkboxesChanged(f.getInputs("checkbox","hide"));
+        	
+        	if (filterChanged)
+        	{
+	        	updateAmenities(null,null,true);
+        	}
+
+        	if (f.saveincookie.checked)
+        	{
+	        	var formJson = Object.toJSON(f.serialize(true));
+	    		var cookie_str = escape(formJson);
+	
+	    		var date = new Date();
+				date.setTime(date.getTime() + (1000*60*60*24*28));	// 28 tage
+				var cookie_expires = '; expires=' + date.toGMTString();
+	    		try {
+	    			document.cookie = "settings="+cookie_str + cookie_expires;
+	    		} catch (e) {
+					alert(e);
+	    		}
+        	}
+        }
+
+        function loadSettingsFromCookie()
+        {
+            var formData = null;
+    		var cookies = document.cookie.match('settings=(.*?)(;|$)');
+    		if (cookies) 
+        	{
+    			formData = (unescape(cookies[1])).evalJSON();
+	    		var f = $('filterform');
+	
+				f.saveincookie.checked = formData.saveincookie && formData.saveincookie == 1;
+				f.lon.value = formData.lon ? formData.lon : "";
+				f.lat.value = formData.lat ? formData.lat : "";
+
+				var cbs = f.getInputs("checkbox","show");
+	        	for (var x = 0; x < cbs.length;x++)
+	        	{
+					cbs[x].checked = (cbs[x].value == formData.show) || (formData.show instanceof Array && (formData.show.indexOf(cbs[x].value) != -1));
+	        	}
+				cbs = f.getInputs("checkbox","hide");
+	        	for (var x = 0; x < cbs.length;x++)
+	        	{
+					cbs[x].checked = (cbs[x].value == formData.hide) || (formData.hide instanceof Array && (formData.hide.indexOf(cbs[x].value) != -1));
+	        	}
+				
+				
+				
+			if (formData.lon && formData.lat)
+		            map.setCenter(lonLatToMercator(new OpenLayers.LonLat(formData.lon,formData.lat)),MIN_ZOOM_FOR_EDIT+1);
+
+    		}
+        }
+
+        function goToHomeBase()
+        {
+    		var f = $('filterform');
+			if (f.lon.value && f.lat.value)
+			{
+	            map.setCenter(lonLatToMercator(new OpenLayers.LonLat(f.lon.value,f.lat.value)),MIN_ZOOM_FOR_EDIT+1);
+			}
+			else
+			{
+				alert("No home base. Set it in the settings.");
+			}
+            
+        }
+
+        function showFilterSettings()
+        {
+        	var f = $('filterform');
+        	var cbs = f.getInputs("checkbox");
+        	for (var x = 0; x < cbs.length;x++)
+        	{
+				cbs[x].defaultChecked = cbs[x].checked;
+        	}
+            
+        	$('filter').toggle();
+        }     
+
+        function moveAmenity(nodeId)
+        {
+            $("moving").show();
+        	document.body.style.cursor='crosshair';
+            AE.movingAmenity = AE.getAmenity(nodeId);
+            AE.removeFeature(nodeId);
+        }
+
+        function cancelMoving()
+        {
+        	$("moving").hide();
+        	document.body.style.cursor='auto';        	
+        	AE.movingAmenity.node.newLon = null;
+        	AE.movingAmenity.node.newLat = null;
+        	AE.addFeature(AE.createFeature(AE.movingAmenity));
+        	AE.movingAmenity = null;      
+    		AE.removeNewAmenityFeature();
+        }
+
+        function checkAccessRights()
+        {
+            if (!oauthTokensAvailable)
+            {
+                alert("The Amenity Editor now uses OAuth. Please press the OAuth button in the top right corner und authorize this application to be able to modify OSM data.");
+            }
+            else
+              return true;
+        }
+        
+
+        function saveAmenity(nodeId)
+        {
+			var f = $("form_"+nodeId);
+			if (checkAccessRights())
+        	{
+            	var params = new Object();
+            	params = Object.extend(params, f.serialize(true));
+
+            	if ((params["_nodeId"] == 0 || AE.isMoving()) && (params.key.indexOf("highway") != -1 || params.key.indexOf("railway") != -1))
+            	{
+                	alert("Highway and railway nodes must be part of a way. This editor is not precise enough to do that. Please use another editor to create nodes like this. ");
+                	return;	
+            	}
+
+            	var requestMethod = 'post';
+            	if (params["_nodeId"] != 0)
+                	requestMethod = 'put';
+            	
+            	
+				$("storing").show();            	            	
+
+            	new Ajax.Request(URL.amenity, {
+          		  method: requestMethod, parameters : params, 
+          		  onSuccess: function(transport) {
+        			AE.closePopup(nodeId);
+					updateAmenities(null,null,true);
+					$("storing").hide();
+					$("moving").hide();
+		        	document.body.style.cursor='auto';					
+        			AE.removeNewAmenityFeature();
+        			AE.movingAmenity = null;
+        			alert(transport.responseJSON.message+"\n\nPlease note that the node may not appear on the map even with a OK message. This might be due to your filter settings or that you have created a node that the amenity editor does not display.\nPlease use only the templates for node creation.");
+          		  }
+          		});
+        	}
+        }            
+
+        function deleteAmenity(nodeId)
+        {
+            if (confirm("Are you sure?"))
+            {
+				var f = $("form_"+nodeId);
+				if (checkAccessRights())
+	        	{
+	            	var params = new Object();
+	            	params = Object.extend(params, f.serialize(true));
+	            	
+	            	new Ajax.Request(URL.amenity, {
+	          		  method: 'delete', parameters : params, 
+	          		  onSuccess: function(transport) {
+	        			AE.closePopup(nodeId);
+						updateAmenities(null,null,true);
+	        			alert(transport.responseJSON.message);
+	          		  }
+	          		});
+	        	}
+            }
+        }      
+
+        function updateZoomStatus()
+        {
+			var zoom = map.getZoom();
+			if (zoom <= MIN_ZOOM_FOR_EDIT)
+			{
+				$("zoomStatus").show();
+				$("newNodeButton").disable();
+				$("loadOsmDataButton").disable();
+			}
+			else
+			{
+				$("zoomStatus").hide();
+				$("newNodeButton").enable();
+				$("loadOsmDataButton").enable();
+			}            
+        }      
+
+        function loadBbox()
+        {
+        	updateAmenities(null,URL.osmUpdate,true); 
+        }
+        function setMapCenterAsHomeBase()
+        {
+			var coords = map.getCenter();
+			$("filterform").lon.value = x2lon(coords.lon);
+			$("filterform").lat.value = y2lat(coords.lat);
+        }
+
+        function setMaxZoom()
+        {
+        	map.zoomTo(MAX_ZOOM);
+        }        
+
+        function selectAll()
+        {
+            var elements = new Selector('.filter-positive-cb').findElements($('filterform'));
+			$A(elements).each(function(element) {
+				element.checked = true;
+			});
+        }
+
+        function deselectAll()
+        {
+            var elements = new Selector('.filter-positive-cb').findElements($('filterform'));
+			$A(elements).each(function(element) {
+				element.checked = false;
+			});
+        }
+
+        function invertSelection()
+        {
+            var elements = new Selector('.filter-positive-cb').findElements($('filterform'));
+			$A(elements).each(function(element) {
+				element.checked = !element.checked;
+			});
+        }    
+
+        window.onload=init;
+    </script>
+<link href="osmsurround_files/style.css" type="text/css" rel="stylesheet"></head>
+
+<body>
+<div id="content" style="overflow: hidden; height: 100%">
+<div style="padding:5px;height: 32px; position:absolute; left: 80px; top: 0px; right:60px; z-index:750; -moz-border-radius:0px 0px 6px 6px; border-radius:0px 0px 6px 6px; background-color: #FFFFFF; background-repeat: repeat-x; border:1px solid #000000;border-top:none">
+<div style="font-weight:bold;font-size:14px;">OSM Amenity Editor (0.81)</div>
+<div style="position:relative; bottom:-5px; left:0px;font-size:9px;font-weight: normal;width:900px">Made by <a href="http://www.grundid-gmbh.de/">GrundID GmbH</a>, Data by <a href="http://www.openstreetmap.org/">OpenStreetMap</a> under <a href="http://creativecommons.org/licenses/by-sa/2.0/">CC-BY-SA</a>, with <a href="http://code.google.com/p/google-maps-icons/">Maps icons collection (CC BY SA 3.0)</a>, Contact: as(a t)osmsurround(d o t)org, <a href="http://www.openstreetmap.org/user/nitegate">OSM User: nitegate</a></div>
+<div style="position:absolute; right:5px; top: 5px; width:750px;text-align: right">
+
+<input class="ae-small-button" value="Max Zoom" title="Maximum zoom" onclick="setMaxZoom();" type="button">
+<input class="ae-small-button" value="Home Base" title="Shows your home base" onclick="goToHomeBase();" type="button">
+<input disabled="disabled" class="ae-small-button" value="Create new node" id="newNodeButton" title="Activates or deactivates the mode to create new nodes" onclick="switchAdding();" style="width: 150px;" type="button">
+<input disabled="disabled" class="ae-small-button" value="Refresh OSM data" id="loadOsmDataButton" title="Refreshes the visible data from the OSM server" onclick="loadBbox();" type="button">
+<input class="ae-small-button" value="Settings" title="Shows settings" onclick="showFilterSettings();" type="button">
+<input class="ae-small-button" value="Help" title="Shows help" onclick="$('help').toggle();" type="button">
+<input class="ae-small-button" value="OAuth/Login" title="Login into OSM." onclick="window.location.href='/ae/oauthRequest';" type="button">
+</div>
+</div>
+<div style="position:absolute; left: 80px; top: 55px; right:60px; z-index:1000;">
+<center>
+<div class="infobox" style="width:800px;display:none;text-align: left" id="filter">
+<form id="filterform">
+<fieldset style="width:520px;float:left">
+<legend>Which nodes to <b>show</b>:</legend>
+
+<div style="width:170px;float:left;">
+<input class="filter-positive-cb" name="show" value="bakery" checked="checked" id="cb_bakery" type="checkbox">
+&nbsp;<label for="cb_bakery">bakery&nbsp;<img src="osmsurround_files/bread.png" height="12" width="12"></label></div>
+
+<div style="width:170px;float:left;">
+<input class="filter-positive-cb" name="show" value="restaurant" checked="checked" id="cb_restaurant" type="checkbox">
+&nbsp;<label for="cb_restaurant">restaurant &nbsp;<img src="osmsurround_files/restaurant.png" height="12" width="12"></label></div>
+
+<div style="width:170px;float:left;">
+<input class="filter-positive-cb" name="show" value="fast_food" checked="checked" id="cb_fast_food" type="checkbox">
+&nbsp;<label for="cb_fast_food">fast_food &nbsp;<img src="osmsurround_files/fastfood.png" height="12" width="12"></label></div>
+
+<div style="width:170px;float:left;">
+<input class="filter-positive-cb" name="show" value="cafe" checked="checked" id="cb_cafe" type="checkbox">
+&nbsp;<label for="cb_cafe">cafe &nbsp;<img src="osmsurround_files/coffee.png" height="12" width="12"></label></div>
+
+<div style="width:170px;float:left;">
+<input class="filter-positive-cb" name="show" value="nightclub" checked="checked" id="cb_nightclub" type="checkbox">
+&nbsp;<label for="cb_nightclub">nightclub &nbsp;<img src="osmsurround_files/club.png" height="12" width="12"></label></div>
+
+<div style="width:170px;float:left;">
+<input class="filter-positive-cb" name="show" value="fuel" checked="checked" id="cb_fuel" type="checkbox">
+&nbsp;<label for="cb_fuel">fuel &nbsp;<img src="osmsurround_files/gazstation.png" height="12" width="12"></label></div>
+
+<div style="width:170px;float:left;">
+<input class="filter-positive-cb" name="show" value="parking" checked="checked" id="cb_parking" type="checkbox">
+&nbsp;<label for="cb_parking">parking &nbsp;<img src="osmsurround_files/parking.png" height="12" width="12"></label></div>
+
+<div style="width:170px;float:left;">
+<input class="filter-positive-cb" name="show" value="supermarket" checked="checked" id="cb_supermarket" type="checkbox">
+&nbsp;<label for="cb_supermarket">supermarket &nbsp;<img src="osmsurround_files/supermarket.png" height="12" width="12"></label></div>
+
+<div style="width:170px;float:left;">
+<input class="filter-positive-cb" name="show" value="shop-pharmacy" checked="checked" id="cb_shop-pharmacy" type="checkbox">
+&nbsp;<label for="cb_shop-pharmacy">shop pharmacy &nbsp;<img src="osmsurround_files/drugs.png" height="12" width="12"></label></div>
+
+<div style="width:170px;float:left;">
+<input class="filter-positive-cb" name="show" value="amenity-pharmacy" checked="checked" id="cb_amenity-pharmacy" type="checkbox">
+&nbsp;<label for="cb_amenity-pharmacy">amenity pharmacy&nbsp;<img src="osmsurround_files/drugs.png" height="12" width="12"></label></div>
+
+<div style="width:170px;float:left;">
+<input class="filter-positive-cb" name="show" value="doctor" checked="checked" id="cb_doctor" type="checkbox">
+&nbsp;<label for="cb_doctor">doctor &nbsp;<img src="osmsurround_files/doctor.png" height="12" width="12"></label></div>
+
+<div style="width:170px;float:left;">
+<input class="filter-positive-cb" name="show" value="butcher" checked="checked" id="cb_butcher" type="checkbox">
+&nbsp;<label for="cb_butcher">butcher &nbsp;<img src="osmsurround_files/butcher.png" height="12" width="12"></label></div>
+
+<div style="width:170px;float:left;">
+<input class="filter-positive-cb" name="show" value="car" checked="checked" id="cb_car" type="checkbox">
+&nbsp;<label for="cb_car">car &nbsp;<img src="osmsurround_files/car.png" height="12" width="12"></label></div>
+
+<div style="width:170px;float:left;">
+<input class="filter-positive-cb" name="show" value="car_repair" checked="checked" id="cb_car_repair" type="checkbox">
+&nbsp;<label for="cb_car_repair">car_repair &nbsp;<img src="osmsurround_files/carrepair.png" height="12" width="12"></label></div>
+
+<div style="width:170px;float:left;">
+<input class="filter-positive-cb" name="show" value="clothes" checked="checked" id="cb_clothes" type="checkbox">
+&nbsp;<label for="cb_clothes">clothes &nbsp;<img src="osmsurround_files/clothes.png" height="12" width="12"></label></div>
+
+<div style="width:170px;float:left;">
+<input class="filter-positive-cb" name="show" value="florist" checked="checked" id="cb_florist" type="checkbox">
+&nbsp;<label for="cb_florist">florist &nbsp;<img src="osmsurround_files/flowers.png" height="12" width="12"></label></div>
+
+<div style="width:170px;float:left;">
+<input class="filter-positive-cb" name="show" value="laundry" checked="checked" id="cb_laundry" type="checkbox">
+&nbsp;<label for="cb_laundry">laundry &nbsp;<img src="osmsurround_files/laundromat.png" height="12" width="12"></label></div>
+
+<div style="width:170px;float:left;">
+<input class="filter-positive-cb" name="show" value="hairdresser" checked="checked" id="cb_hairdresser" type="checkbox">
+&nbsp;<label for="cb_hairdresser">hairdresser &nbsp;<img src="osmsurround_files/hairsalon.png" height="12" width="12"></label></div>
+
+<div style="width:170px;float:left;">
+<input class="filter-positive-cb" name="show" value="place_of_worship" checked="checked" id="cb_place_of_worship" type="checkbox">
+&nbsp;<label for="cb_place_of_worship">place_of_worship &nbsp;<img src="osmsurround_files/church2.png" height="12" width="12"></label></div>
+
+<div style="width:170px;float:left;">
+<input class="filter-positive-cb" name="show" value="postbox" checked="checked" id="cb_postbox" type="checkbox">
+&nbsp;<label for="cb_postbox">postbox &nbsp;<img src="osmsurround_files/postal.png" height="12" width="12"></label></div>
+
+<div style="width:170px;float:left;">
+<input class="filter-positive-cb" name="show" value="post_office" checked="checked" id="cb_post_office" type="checkbox">
+&nbsp;<label for="cb_post_office">post_office &nbsp;<img src="osmsurround_files/postal.png" height="12" width="12"></label></div>
+
+<div style="width:170px;float:left;">
+<input class="filter-positive-cb" name="show" value="bank" checked="checked" id="cb_bank" type="checkbox">
+&nbsp;<label for="cb_bank">bank &nbsp;<img src="osmsurround_files/bank.png" height="12" width="12"></label></div>
+
+<div style="width:170px;float:left;">
+<input class="filter-positive-cb" name="show" value="playground" checked="checked" id="cb_playground" type="checkbox">
+&nbsp;<label for="cb_playground">playground &nbsp;<img src="osmsurround_files/playground.png" height="12" width="12"></label></div>
+
+<div style="width:170px;float:left;">
+<input class="filter-positive-cb" name="show" value="bench" checked="checked" id="cb_bench" type="checkbox">
+&nbsp;<label for="cb_bench">bench &nbsp;<img src="osmsurround_files/bench.png" height="12" width="12"></label></div>
+
+<div style="width:170px;float:left;">
+<input class="filter-positive-cb" name="show" value="hunting" checked="checked" id="cb_hunting" type="checkbox">
+&nbsp;<label for="cb_hunting">hunting &nbsp;<img src="osmsurround_files/hunting.png" height="12" width="12"></label></div>
+
+<div style="width:170px;float:left;">
+<input class="filter-positive-cb" name="show" value="shelter" checked="checked" id="cb_shelter" type="checkbox">
+&nbsp;<label for="cb_shelter">shelter &nbsp;<img src="osmsurround_files/shelter-picnic.png" height="12" width="12"></label></div>
+
+<div style="width:170px;float:left;">
+<input class="filter-positive-cb" name="show" value="atm" checked="checked" id="cb_atm" type="checkbox">
+&nbsp;<label for="cb_atm">atm &nbsp;<img src="osmsurround_files/atm.png" height="12" width="12"></label></div>
+
+<div style="width:170px;float:left;">
+<input class="filter-positive-cb" name="show" value="pool" checked="checked" id="cb_pool" type="checkbox">
+&nbsp;<label for="cb_pool">pool &nbsp;<img src="osmsurround_files/pool.png" height="12" width="12"></label></div>
+
+<div style="width:170px;float:left;">
+<input class="filter-positive-cb" name="show" value="recycle" checked="checked" id="cb_recycle" type="checkbox">
+&nbsp;<label for="cb_recycle">recycle &nbsp;<img src="osmsurround_files/recycle.png" height="12" width="12"></label></div>
+
+<div style="width:170px;float:left;">
+<input class="filter-positive-cb" name="show" value="fitness_studio" checked="checked" id="cb_fitness_studio" type="checkbox">
+&nbsp;<label for="cb_fitness_studio">fitness_studio &nbsp;<img src="osmsurround_files/fitnesscenter.png" height="12" width="12"></label></div>
+
+<div style="width:170px;float:left;">
+<input class="filter-positive-cb" name="show" value="maxspeed" checked="checked" id="cb_maxspeed" type="checkbox">
+&nbsp;<label for="cb_maxspeed">maxspeed &nbsp;<img src="osmsurround_files/photoright.png" height="12" width="12"></label></div>
+
+<div style="width:170px;float:left;">
+<input class="filter-positive-cb" name="show" value="hotel" checked="checked" id="cb_hotel" type="checkbox">
+&nbsp;<label for="cb_hotel">hotel &nbsp;<img src="osmsurround_files/hotel.png" height="12" width="12"></label></div>
+
+<div style="width:170px;float:left;">
+<input class="filter-positive-cb" name="show" value="hostel" checked="checked" id="cb_hostel" type="checkbox">
+&nbsp;<label for="cb_hostel">hostel &nbsp;<img src="osmsurround_files/hostel.png" height="12" width="12"></label></div>
+
+<div style="width:170px;float:left;">
+<input class="filter-positive-cb" name="show" value="bus" checked="checked" id="cb_bus" type="checkbox">
+&nbsp;<label for="cb_bus">bus &nbsp;<img src="osmsurround_files/bus.png" height="12" width="12"></label></div>
+
+<div style="width:170px;float:left;">
+<input class="filter-positive-cb" name="show" value="telephone" checked="checked" id="cb_telephone" type="checkbox">
+&nbsp;<label for="cb_telephone">telephone &nbsp;<img src="osmsurround_files/telephone.png" height="12" width="12"></label></div>
+
+<div style="width:170px;float:left;">
+<input class="filter-positive-cb" name="show" value="school" checked="checked" id="cb_school" type="checkbox">
+&nbsp;<label for="cb_school">school &nbsp;<img src="osmsurround_files/school.png" height="12" width="12"></label></div>
+
+<div style="width:170px;float:left;">
+<input class="filter-positive-cb" name="show" value="university" checked="checked" id="cb_university" type="checkbox">
+&nbsp;<label for="cb_university">university&nbsp;<img src="osmsurround_files/university.png" height="12" width="12"></label></div>
+
+<div style="width:170px;float:left;">
+<input class="filter-positive-cb" name="show" value="bicycle_parking" checked="checked" id="cb_bicycle_parking" type="checkbox">
+&nbsp;<label for="cb_bicycle_parking">bicycle_parking&nbsp;<img src="osmsurround_files/bicycleparking.png" height="12" width="12"></label></div>
+
+<div style="width:170px;float:left;">
+<input class="filter-positive-cb" name="show" value="amenity" checked="checked" id="cb_amenity" type="checkbox">
+&nbsp;<label for="cb_amenity">amenity&nbsp;<img src="osmsurround_files/marker-red.png" height="12" width="12"></label></div>
+
+<div style="width:170px;float:left;">
+<input class="filter-positive-cb" name="show" value="shop" checked="checked" id="cb_shop" type="checkbox">
+&nbsp;<label for="cb_shop">shop&nbsp;<img src="osmsurround_files/shoppingmall.png" height="12" width="12"></label></div>
+
+<div style="width:170px;float:left;">
+<input class="filter-positive-cb" name="show" value="place" checked="checked" id="cb_place" type="checkbox">
+&nbsp;<label for="cb_place">place&nbsp;<img src="osmsurround_files/marker-fuchsia.png" height="12" width="12"></label></div>
+
+<div style="width:170px;float:left;">
+<input class="filter-positive-cb" name="show" value="man_made" checked="checked" id="cb_man_made" type="checkbox">
+&nbsp;<label for="cb_man_made">man_made&nbsp;<img src="osmsurround_files/marker-teal.png" height="12" width="12"></label></div>
+
+<div style="width:170px;float:left;">
+<input class="filter-positive-cb" name="show" value="tourism" checked="checked" id="cb_tourism" type="checkbox">
+&nbsp;<label for="cb_tourism">tourism&nbsp;<img src="osmsurround_files/marker-aqua.png" height="12" width="12"></label></div>
+
+<div style="width:170px;float:left;">
+<input class="filter-positive-cb" name="show" value="other" id="cb_other" type="checkbox">
+&nbsp;<label for="cb_other">other&nbsp;<img src="osmsurround_files/marker-yellow.png" height="12" width="12"></label></div>
+
+<div style="clear:both"><input class="ae-small-button" value="select all" onclick="selectAll();" type="button">
+<input class="ae-small-button" value="deselect all" onclick="deselectAll();" type="button">
+<input class="ae-small-button" value="invert selection" onclick="invertSelection();" type="button"></div>
+</fieldset>
+<fieldset style="width:240px">
+<legend>Which nodes to <b>hide</b>:</legend>
+
+<input name="hide" value="opening_hours" id="cb_opening_hours" type="checkbox">
+&nbsp;<label for="cb_opening_hours">opening hours</label><br>
+
+<input name="hide" value="address" id="cb_address" type="checkbox">
+&nbsp;<label for="cb_address">complete address</label><br>
+
+<input name="hide" value="benches" id="cb_benches" type="checkbox">
+&nbsp;<label for="cb_benches">benches, parking, post boxes, telephones</label><br>
+
+</fieldset>
+<fieldset style="clear:both">
+<legend>Username and password for the OSM server:</legend>
+<div>No account yet? <a href="http://www.openstreetmap.org/user/new" target="_blank">Register here.</a></div>
+</fieldset>
+<fieldset>
+<legend>Your base:</legend>
+<div style="height: 22px;position: relative;">
+<span style="vertical-align: middle;">Longitude:&nbsp;</span><input name="lon" size="12" style="width: 100px;" type="text">
+<span style="vertical-align: middle;">Latitude:&nbsp;</span><input name="lat" size="12" style="width: 100px;" type="text"></div> 
+<input class="ae-small-button" value="Use map center" onclick="setMapCenterAsHomeBase();" type="button">
+</fieldset>
+<fieldset>
+<legend>Cookies:</legend>
+<input name="saveincookie" value="1" id="cb_saveincookie" type="checkbox">&nbsp;<label for="cb_saveincookie">Save settings in a cookie</label>
+</fieldset>
+</form>
+<p>
+<input class="ae-small-button" value="Apply" onclick="saveFilterSettings();" type="button">
+<input class="ae-small-button" value="Close" onclick="$('filter').hide();" type="button">
+</p></div>
+
+<div class="infobox" style="width:450px;text-align:left;display:none;height:500px;overflow-y:scroll;padding:10px" id="help">
+<h4>Willkomen beim Amenity Editor</h4>
+<i>Sorry, no english translation yet. Try google <a href="http://translate.google.de/translate?js=n&amp;prev=_t&amp;hl=de&amp;ie=UTF-8&amp;u=http%3A%2F%2Fae.osmsurround.org&amp;sl=de&amp;tl=en&amp;history_state0=">translate</a> in the meantime.</i>
+<hr>
+Der Amenity Editor ist ein einfaches Online-Werkzeug um Knoten/Points of
+ Interest (POIs) auf der OpenStreetMap Karte zu erstellen und zu ändern.
+ Er soll dem Benutzer schnell die Möglichkeit geben um fehlende 
+Informationen, wie Öffnungszeiten oder Adresse zu ergänzen.
+<p>
+<b>Datencaching</b>
+</p><p>
+Um die Anzeige der POIs auf der OSM Karte zu beschleunigen werden die 
+OSM Daten in einem Cache zwischengespeichert. Dies kann manchmal zur 
+Folge haben, dass sie nicht immer auf dem neusten Stand sind. Um dieses 
+Problem zu lösen gibt es die Möglichkeit topaktuelle Daten vom OSM 
+Server zu laden. Dies erfolgt mit dem Button „Daten von OSM laden“. Das 
+Laden der Daten kann unter Umständen etwas länger dauern. Wir bitten 
+hier einfach um etwas Geduld. Der Cache wird automatisch beim Laden der 
+OSM Daten aktualisiert, außerdem wird regelmäßig ein neuer Abzug der OSM
+ Daten eingespielt.<br>
+Die gecachten Daten enthalten im Moment nur Daten aus Deutschland. In 
+allen anderen Gegenden müssen die Daten manuell mit dem "Daten von OSM 
+laden" Button nachgeladen werden.
+</p><p>
+<b>Ändern von POIs</b>
+</p><p>
+Um ein POI zu ändern, klicke es mit der Maus an. In dem angezeigten 
+Layer werden dann alle vorhandenen Informationen zu dem POI angezeigt. 
+Klicke auf „Tag hinzufügen“ um einen neuen Tag hinzuzufügen oder benutze
+ die Icons um bestimmte Sets von Tags einzufügen. Fülle danach die 
+entsprechenden Werte ein. Durch Autovervollständigen erhältst du 
+sinnvolle Vorschläge in Abhängigkeit vom Tag-Namen.<br>
+Um die Änderungen zu Speichern, klicke auf den Button „Speichern“.<br>
+Um ein POI zu löschen klicke einfach auf den entsprechenden Button. <br>
+Um ein POI zu verschieben klicke auf den entsprechenden Button und folge den Anweisungen auf dem Bildschirm.<br>
+</p><p>
+<b>Anlegen von neuen POIs</b>
+</p><p>
+Um neue POIs anzulegen muss der Erstellen-Modus aktiviert werden. Dies 
+erfolgt durch den Button „Neuen Knoten erstellen“. Danach kannst auf 
+eine beliebige Stelle klicken und es wird ein gelber Marker angelegt. 
+Das Layer zum Einfügen der Informationen wird auch gleich angezeigt. 
+Wähle eine Vorlage für den POI aus, oder klicke auf „Leerer Knoten“ um 
+beliebige andere Informationen zu erfassen.
+</p><p>
+<b>Einstellungen</b>
+</p><p>
+In den Einstellungen kannst du definieren, welche Knoten angezeigt 
+werden sollen. Außerdem kann du hier deine Home Basis angeben, die immer
+ beim Start der Anwendung und beim Klicken auf den Button „Home Base“ 
+angezeigt wird. 
+Darüber hinaus wird hier dein Benutzername und Passwort für den OSM 
+Server gespeichert.<br>
+Alle Einstellungen können bei Bedarf in einem Cookie gespeichert werden um sie bei der nächsten Session wiederherzustellen.<br>
+</p><p>
+<input class="ae-small-button" value="Hilfe schließen" onclick="$('help').toggle();" type="button">
+</p><p>
+Contact: as(a t)osmsurround(d o t)org, <a href="http://betaplace.emaitie.de/" target="_blank">betaplace.emaitie.de</a>
+</p><p>&nbsp;</p><p>
+</p></div>
+<div class="infobox" style="width:250px;display:none" id="feamenities">
+No or very few amenities have been found for this area. Please check your <a href="#" onclick="showFilterSettings();">filter settings</a> or try <a href="#" onclick="loadBbox();">downloading fresh OSM data</a>.
+</div>
+<div class="infobox" style="width:350px;display:none" id="moving">
+Click now on the map where you what this node to be placed. Then click on the node and choose "Save".<br>
+<input class="ae-small-button" value="Cancel move." title="Restores the previous position." onclick="cancelMoving()" type="button">
+</div>
+<div class="infobox" style="width:170px;display:none" id="loading">
+Loading data...<br><img src="osmsurround_files/throbber.gif">
+</div>
+<div class="infobox" style="width:170px;display:none" id="storing">
+Saving data...<br><img src="osmsurround_files/throbber.gif">
+</div>
+<div class="infobox" style="width: 400px;" id="zoomStatus">
+Zoom too low. Please, zoom in to be able to load new nodes.<br>
+<input class="ae-small-button" value="Adujst zoom" title="Adujsts the zoom so that new nodes can be loaded." onclick="map.zoomTo(MIN_ZOOM_FOR_EDIT+1)" type="button">
+</div>
+</center>
+</div>
+<div class="olMap" style="height: 100%" id="map"><div class="olMapViewport olControlDragPanActive olControlZoomBoxActive olControlNavigationActive olControlMousePositionActive olControlActive" style="position: relative; overflow: hidden; width: 100%; height: 100%;" id="OpenLayers.Map_8_OpenLayers_ViewPort"><div style="position: absolute; z-index: 749; left: 0px; top: 0px;" id="OpenLayers.Map_8_OpenLayers_Container"><div class="olLayerDiv" dir="ltr" style="position: absolute; width: 100%; height: 100%; z-index: 100;" id="OpenLayers.Layer.OSM.Mapnik_6"><div style="overflow: hidden; position: absolute; z-index: 1; left: 231px; top: 459px; width: 256px; height: 256px;"><img src="osmsurround_files/86.png" class="olTileImage" style="width: 256px; height: 256px; position: relative;" id="OpenLayersDiv89"></div><div style="overflow: hidden; position: absolute; z-index: 1; left: 487px; top: 459px; width: 256px; height: 256px;"><img src="osmsurround_files/86_002.png" class="olTileImage" style="width: 256px; height: 256px; position: relative;" id="OpenLayersDiv92"></div><div style="overflow: hidden; position: absolute; z-index: 1; left: 743px; top: 459px; width: 256px; height: 256px;"><img src="osmsurround_files/86_003.png" class="olTileImage" style="width: 256px; height: 256px; position: relative;" id="OpenLayersDiv95"></div><div style="overflow: hidden; position: absolute; z-index: 1; left: 743px; top: 203px; width: 256px; height: 256px;"><img src="osmsurround_files/85.png" class="olTileImage" style="width: 256px; height: 256px; position: relative;" id="OpenLayersDiv98"></div><div style="overflow: hidden; position: absolute; z-index: 1; left: 487px; top: 203px; width: 256px; height: 256px;"><img src="osmsurround_files/85_002.png" class="olTileImage" style="width: 256px; height: 256px; position: relative;" id="OpenLayersDiv101"></div><div style="overflow: hidden; position: absolute; z-index: 1; left: 231px; top: 203px; width: 256px; height: 256px;"><img src="osmsurround_files/85_005.png" class="olTileImage" style="width: 256px; height: 256px; position: relative;" id="OpenLayersDiv104"></div><div style="overflow: hidden; position: absolute; z-index: 1; left: -25px; top: 203px; width: 256px; height: 256px;"><img src="osmsurround_files/85_004.png" class="olTileImage" style="width: 256px; height: 256px; position: relative;" id="OpenLayersDiv107"></div><div style="overflow: hidden; position: absolute; z-index: 1; left: -25px; top: 459px; width: 256px; height: 256px;"><img src="osmsurround_files/86_004.png" class="olTileImage" style="width: 256px; height: 256px; position: relative;" id="OpenLayersDiv110"></div><div style="overflow: hidden; position: absolute; z-index: 1; left: -25px; top: 715px; width: 256px; height: 256px;"><img src="osmsurround_files/87_003.png" class="olTileImage" style="width: 256px; height: 256px; position: relative;" id="OpenLayersDiv113"></div><div style="overflow: hidden; position: absolute; z-index: 1; left: 231px; top: 715px; width: 256px; height: 256px;"><img src="osmsurround_files/87_005.png" class="olTileImage" style="width: 256px; height: 256px; position: relative;" id="OpenLayersDiv116"></div><div style="overflow: hidden; position: absolute; z-index: 1; left: 487px; top: 715px; width: 256px; height: 256px;"><img src="osmsurround_files/87_002.png" class="olTileImage" style="width: 256px; height: 256px; position: relative;" id="OpenLayersDiv119"></div><div style="overflow: hidden; position: absolute; z-index: 1; left: 743px; top: 715px; width: 256px; height: 256px;"><img src="osmsurround_files/87.png" class="olTileImage" style="width: 256px; height: 256px; position: relative;" id="OpenLayersDiv122"></div><div style="overflow: hidden; position: absolute; z-index: 1; left: 999px; top: 715px; width: 256px; height: 256px;"><img src="osmsurround_files/87_004.png" class="olTileImage" style="width: 256px; height: 256px; position: relative;" id="OpenLayersDiv125"></div><div style="overflow: hidden; position: absolute; z-index: 1; left: 999px; top: 459px; width: 256px; height: 256px;"><img src="osmsurround_files/86_005.png" class="olTileImage" style="width: 256px; height: 256px; position: relative;" id="OpenLayersDiv128"></div><div style="overflow: hidden; position: absolute; z-index: 1; left: 999px; top: 203px; width: 256px; height: 256px;"><img src="osmsurround_files/85_003.png" class="olTileImage" style="width: 256px; height: 256px; position: relative;" id="OpenLayersDiv131"></div><div style="overflow: hidden; position: absolute; z-index: 1; left: 999px; top: -53px; width: 256px; height: 256px;"><img src="osmsurround_files/84_005.png" class="olTileImage" style="width: 256px; height: 256px; position: relative;" id="OpenLayersDiv134"></div><div style="overflow: hidden; position: absolute; z-index: 1; left: 743px; top: -53px; width: 256px; height: 256px;"><img src="osmsurround_files/84_004.png" class="olTileImage" style="width: 256px; height: 256px; position: relative;" id="OpenLayersDiv137"></div><div style="overflow: hidden; position: absolute; z-index: 1; left: 487px; top: -53px; width: 256px; height: 256px;"><img src="osmsurround_files/84_003.png" class="olTileImage" style="width: 256px; height: 256px; position: relative;" id="OpenLayersDiv140"></div><div style="overflow: hidden; position: absolute; z-index: 1; left: 231px; top: -53px; width: 256px; height: 256px;"><img src="osmsurround_files/84_002.png" class="olTileImage" style="width: 256px; height: 256px; position: relative;" id="OpenLayersDiv143"></div><div style="overflow: hidden; position: absolute; z-index: 1; left: -25px; top: -53px; width: 256px; height: 256px;"><img src="osmsurround_files/84.png" class="olTileImage" style="width: 256px; height: 256px; position: relative;" id="OpenLayersDiv146"></div><div style="overflow: hidden; position: absolute; display: none; z-index: 0; left: 743px; top: 203px; width: 256px; height: 256px;"><img src="osmsurround_files/85.png" class="olTileImage" style="width: 256px; height: 256px; position: relative;" id="OpenLayersDiv150"></div><div style="overflow: hidden; position: absolute; display: none; z-index: 0; left: 487px; top: 203px; width: 256px; height: 256px;"><img src="osmsurround_files/85_002.png" class="olTileImage" style="width: 256px; height: 256px; position: relative;" id="OpenLayersDiv152"></div><div style="overflow: hidden; position: absolute; display: none; z-index: 0; left: 743px; top: 459px; width: 256px; height: 256px;"><img src="osmsurround_files/86_003.png" class="olTileImage" style="width: 256px; height: 256px; position: relative;" id="OpenLayersDiv154"></div><div style="overflow: hidden; position: absolute; display: none; z-index: 0; left: 999px; top: -53px; width: 256px; height: 256px;"><img src="osmsurround_files/84_005.png" class="olTileImage" style="width: 256px; height: 256px; position: relative;" id="OpenLayersDiv156"></div><div style="overflow: hidden; position: absolute; display: none; z-index: 0; left: 231px; top: 203px; width: 256px; height: 256px;"><img src="osmsurround_files/85_005.png" class="olTileImage" style="width: 256px; height: 256px; position: relative;" id="OpenLayersDiv158"></div><div style="overflow: hidden; position: absolute; display: none; z-index: 0; left: 231px; top: 459px; width: 256px; height: 256px;"><img src="osmsurround_files/86.png" class="olTileImage" style="width: 256px; height: 256px; position: relative;" id="OpenLayersDiv160"></div><div style="overflow: hidden; position: absolute; display: none; z-index: 0; left: -25px; top: 715px; width: 256px; height: 256px;"><img src="osmsurround_files/87_003.png" class="olTileImage" style="width: 256px; height: 256px; position: relative;" id="OpenLayersDiv162"></div><div style="overflow: hidden; position: absolute; display: none; z-index: 0; left: -25px; top: 203px; width: 256px; height: 256px;"><img src="osmsurround_files/85_004.png" class="olTileImage" style="width: 256px; height: 256px; position: relative;" id="OpenLayersDiv164"></div><div style="overflow: hidden; position: absolute; display: none; z-index: 0; left: 231px; top: 715px; width: 256px; height: 256px;"><img src="osmsurround_files/87_005.png" class="olTileImage" style="width: 256px; height: 256px; position: relative;" id="OpenLayersDiv166"></div><div style="overflow: hidden; position: absolute; display: none; z-index: 0; left: 231px; top: -53px; width: 256px; height: 256px;"><img src="osmsurround_files/84_002.png" class="olTileImage" style="width: 256px; height: 256px; position: relative;" id="OpenLayersDiv168"></div><div style="overflow: hidden; position: absolute; display: none; z-index: 0; left: 743px; top: -53px; width: 256px; height: 256px;"><img src="osmsurround_files/84_004.png" class="olTileImage" style="width: 256px; height: 256px; position: relative;" id="OpenLayersDiv170"></div><div style="overflow: hidden; position: absolute; display: none; z-index: 0; left: 487px; top: 459px; width: 256px; height: 256px;"><img src="osmsurround_files/86_002.png" class="olTileImage" style="width: 256px; height: 256px; position: relative;" id="OpenLayersDiv172"></div><div style="overflow: hidden; position: absolute; display: none; z-index: 0; left: -25px; top: 459px; width: 256px; height: 256px;"><img src="osmsurround_files/86_004.png" class="olTileImage" style="width: 256px; height: 256px; position: relative;" id="OpenLayersDiv174"></div><div style="overflow: hidden; position: absolute; display: none; z-index: 0; left: 487px; top: 715px; width: 256px; height: 256px;"><img src="osmsurround_files/87_002.png" class="olTileImage" style="width: 256px; height: 256px; position: relative;" id="OpenLayersDiv176"></div><div style="overflow: hidden; position: absolute; display: none; z-index: 0; left: 999px; top: 715px; width: 256px; height: 256px;"><img src="osmsurround_files/87_004.png" class="olTileImage" style="width: 256px; height: 256px; position: relative;" id="OpenLayersDiv178"></div><div style="overflow: hidden; position: absolute; display: none; z-index: 0; left: 999px; top: 459px; width: 256px; height: 256px;"><img src="osmsurround_files/86_005.png" class="olTileImage" style="width: 256px; height: 256px; position: relative;" id="OpenLayersDiv180"></div><div style="overflow: hidden; position: absolute; display: none; z-index: 0; left: 487px; top: -53px; width: 256px; height: 256px;"><img src="osmsurround_files/84_003.png" class="olTileImage" style="width: 256px; height: 256px; position: relative;" id="OpenLayersDiv182"></div><div style="overflow: hidden; position: absolute; display: none; z-index: 0; left: 743px; top: 715px; width: 256px; height: 256px;"><img src="osmsurround_files/87.png" class="olTileImage" style="width: 256px; height: 256px; position: relative;" id="OpenLayersDiv184"></div><div style="overflow: hidden; position: absolute; display: none; z-index: 0; left: 999px; top: 203px; width: 256px; height: 256px;"><img src="osmsurround_files/85_003.png" class="olTileImage" style="width: 256px; height: 256px; position: relative;" id="OpenLayersDiv186"></div><div style="overflow: hidden; position: absolute; display: none; z-index: 0; left: -25px; top: -53px; width: 256px; height: 256px;"><img src="osmsurround_files/84.png" class="olTileImage" style="width: 256px; height: 256px; position: relative;" id="OpenLayersDiv188"></div></div><div class="olLayerDiv" dir="ltr" style="position: absolute; width: 100%; height: 100%; z-index: 330;" id="OpenLayers.Layer.Markers_4"></div><div class="olLayerDiv" dir="ltr" style="position: absolute; width: 100%; height: 100%; z-index: 335;" id="OpenLayers.Layer.Markers_2"></div></div><div unselectable="on" class="olControlPanZoom olControlNoSelect" style="position: absolute; left: 4px; top: 4px; z-index: 1004;" id="OpenLayers.Control.PanZoom_11"><div style="position: absolute; left: 13px; top: 4px; width: 18px; height: 18px;" id="OpenLayers.Control.PanZoom_11_panup"><img src="osmsurround_files/north-mini.png" style="position: relative; width: 18px; height: 18px;" id="OpenLayers.Control.PanZoom_11_panup_innerImage"></div><div style="position: absolute; left: 4px; top: 22px; width: 18px; height: 18px;" id="OpenLayers.Control.PanZoom_11_panleft"><img src="osmsurround_files/west-mini.png" style="position: relative; width: 18px; height: 18px;" id="OpenLayers.Control.PanZoom_11_panleft_innerImage"></div><div style="position: absolute; left: 22px; top: 22px; width: 18px; height: 18px;" id="OpenLayers.Control.PanZoom_11_panright"><img src="osmsurround_files/east-mini.png" style="position: relative; width: 18px; height: 18px;" id="OpenLayers.Control.PanZoom_11_panright_innerImage"></div><div style="position: absolute; left: 13px; top: 40px; width: 18px; height: 18px;" id="OpenLayers.Control.PanZoom_11_pandown"><img src="osmsurround_files/south-mini.png" style="position: relative; width: 18px; height: 18px;" id="OpenLayers.Control.PanZoom_11_pandown_innerImage"></div><div style="position: absolute; left: 13px; top: 63px; width: 18px; height: 18px;" id="OpenLayers.Control.PanZoom_11_zoomin"><img src="osmsurround_files/zoom-plus-mini.png" style="position: relative; width: 18px; height: 18px;" id="OpenLayers.Control.PanZoom_11_zoomin_innerImage"></div><div style="position: absolute; left: 13px; top: 81px; width: 18px; height: 18px;" id="OpenLayers.Control.PanZoom_11_zoomworld"><img src="osmsurround_files/zoom-world-mini.png" style="position: relative; width: 18px; height: 18px;" id="OpenLayers.Control.PanZoom_11_zoomworld_innerImage"></div><div style="position: absolute; left: 13px; top: 99px; width: 18px; height: 18px;" id="OpenLayers.Control.PanZoom_11_zoomout"><img src="osmsurround_files/zoom-minus-mini.png" style="position: relative; width: 18px; height: 18px;" id="OpenLayers.Control.PanZoom_11_zoomout_innerImage"></div></div><div unselectable="on" class="olControlArgParser olControlNoSelect" style="position: absolute; z-index: 1004;" id="OpenLayers.Control.ArgParser_12"></div><div unselectable="on" class="olControlAttribution olControlNoSelect" style="position: absolute; z-index: 1004;" id="OpenLayers.Control.Attribution_13"></div><div unselectable="on" class="olControlLayerSwitcher olControlNoSelect" style="position: absolute; padding-top: 0pt; padding-bottom: 0pt; width: 0px; height: 0px; z-index: 1005;" id="OpenLayers.Control.LayerSwitcher_49"><div style="background-color: transparent;"><span style="background-color: darkblue; display: block; height: 1px; overflow: hidden; font-size: 1px; margin-left: 5px; margin-right: 0px; border-left-width: 0px; border-right-width: 0px; opacity: 0.75;"></span><span style="background-color: darkblue; display: block; height: 1px; overflow: hidden; font-size: 1px; margin-left: 3px; margin-right: 0px; border-left-width: 0px; border-right-width: 0px; opacity: 0.75;"></span><span style="background-color: darkblue; display: block; height: 1px; overflow: hidden; font-size: 1px; margin-left: 2px; margin-right: 0px; border-left-width: 0px; border-right-width: 0px; opacity: 0.75;"></span><span style="background-color: darkblue; display: block; height: 2px; overflow: hidden; font-size: 1px; margin-left: 1px; margin-right: 0px; border-left-width: 0px; border-right-width: 0px; opacity: 0.75;"></span></div><div style="opacity: 0.75; display: none;" class="layersDiv" id="OpenLayers.Control.LayerSwitcher_49_layersDiv"><div class="baseLbl">Base Layer</div><div class="baseLayersDiv"><input checked="checked" value="Mapnik" name="OpenLayers.Control.LayerSwitcher_49_baseLayers" id="OpenLayers.Control.LayerSwitcher_49_input_Mapnik" type="radio"><span style="vertical-align: bottom;" class="labelSpan">Mapnik</span><br></div><div class="dataLbl">Overlays</div><div class="dataLayersDiv"><input checked="checked" value="New amenity" name="New amenity" id="OpenLayers.Control.LayerSwitcher_49_input_New amenity" type="checkbox"><span style="vertical-align: baseline;" class="labelSpan">New amenity</span><br><input checked="checked" value="OSM amenities" name="OSM amenities" id="OpenLayers.Control.LayerSwitcher_49_input_OSM amenities" type="checkbox"><span style="vertical-align: baseline;" class="labelSpan">OSM amenities</span><br></div></div><div style="background-color: transparent;"><span style="background-color: darkblue; display: block; height: 2px; overflow: hidden; font-size: 1px; margin-left: 1px; margin-right: 0px; border-left-width: 0px; border-right-width: 0px; opacity: 0.75;"></span><span style="background-color: darkblue; display: block; height: 1px; overflow: hidden; font-size: 1px; margin-left: 2px; margin-right: 0px; border-left-width: 0px; border-right-width: 0px; opacity: 0.75;"></span><span style="background-color: darkblue; display: block; height: 1px; overflow: hidden; font-size: 1px; margin-left: 3px; margin-right: 0px; border-left-width: 0px; border-right-width: 0px; opacity: 0.75;"></span><span style="background-color: darkblue; display: block; height: 1px; overflow: hidden; font-size: 1px; margin-left: 5px; margin-right: 0px; border-left-width: 0px; border-right-width: 0px; opacity: 0.75;"></span></div><div class="maximizeDiv" style="position: absolute; width: 18px; height: 18px;" id="OpenLayers_Control_MaximizeDiv"><img src="osmsurround_files/layer-switcher-maximize.png" style="position: relative; width: 18px; height: 18px;" id="OpenLayers_Control_MaximizeDiv_innerImage"></div><div class="minimizeDiv" style="position: absolute; width: 18px; height: 18px; display: none;" id="OpenLayers_Control_MinimizeDiv"><img src="osmsurround_files/layer-switcher-minimize.png" style="position: relative; width: 18px; height: 18px;" id="OpenLayers_Control_MinimizeDiv_innerImage"></div></div><div unselectable="on" class="olControlScaleLine olControlNoSelect" style="position: absolute; z-index: 1006;" id="OpenLayers.Control.ScaleLine_63"><div style="visibility: visible; width: 82px;" class="olControlScaleLineTop">50 km</div><div style="visibility: visible; width: 53px;" class="olControlScaleLineBottom">20 mi</div></div><div unselectable="on" class="olControlArgParser olControlNoSelect" style="position: absolute; z-index: 1008;" id="OpenLayers.Control.ArgParser_65"></div><div unselectable="on" class="olControlPermalink" style="position: absolute; z-index: 1008;" id="OpenLayers.Control.Permalink_64"><a href="http://ae.osmsurround.org/ae/index?zoom=8&amp;lat=51.15&amp;lon=9.98&amp;layers=BTT">Permalink</a></div><div unselectable="on" class="olControlMousePosition olControlNoSelect" style="position: absolute; z-index: 1009;" id="OpenLayers.Control.MousePosition_66">9.98000, 51.39743</div><div unselectable="on" class="olControl olControlNoSelect" style="position: absolute; z-index: 1010;" id="OpenLayers.Control_148"></div></div></div>
+</div>
+<noscript>This site is based on JavaScript. Please activate JavaScript.</noscript>
+
+</body></html>
