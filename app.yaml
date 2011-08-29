@@ -1,11 +1,21 @@
-application: helloworld
+application: epoisom
 version: 1
 runtime: python
 api_version: 1
 
 handlers:
-- url: /js
-  static_dir: js
+- url: /jslib
+  static_dir: jslib
+
+- url: /epoiadmin
+  script: epoiadmin.py
+
+- url: /login
+  script: epoiadmin.py
+
+- url: /logout
+  script: epoiadmin.py
 
 - url: /.*
   script: main.py
+

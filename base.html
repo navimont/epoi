@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta http-equiv="content-type" content="text/html;charset=utf-8">
+    <meta name="description" content="Openstreetmap Point-of-Interest Editor"/>
+    <!-- Opengraph.org tags -->
+    <meta property="og:title" content="Openstreetmap Point-of-Interest Editor" />
+    <meta property="og:type" content="non_profit" />
+    <meta property="og:url" content="http://www.navimont.com/" />
+    <meta property="og:site_name" content="" />
+    <meta property="og:description" content=""/>
+    <title>{% block pagetitle %}{% endblock %}</title>
+
+    <!-- now for the map -->
+  </head>
+  <body">
+      <a href='index.html'>epoi - OSM Point-of-Interest Editor</a>
+      {% if nickname %}
+          <a href="logout">logout {{ nickname }}</a>
+      {% else %}
+          <a href="login">login</a>
+      {% endif %}
+      {% block content %} {% endblock %}
+  </body>
+</html>
+

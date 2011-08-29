@@ -9,7 +9,7 @@ class MainPage(webapp.RequestHandler):
         path = os.path.join(os.path.dirname(__file__), 'index.html')
         self.response.out.write(template.render(path, {}))
 
-application = webapp.WSGIApplication([('/', MainPage)],debug=True)
+application = webapp.WSGIApplication([('/.*', MainPage)],debug=True)
 
 def main():
     run_wsgi_app(application)

@@ -1,17 +1,89 @@
+<!DOCTYPE html>
 <html>
-<head>
-  <script type="text/javascript" src="/js/jquery.js"></script>
-  <script type="text/javascript">
-    $(document).ready(function() {
-      $("a").click(function() {
-        alert("Hello world!");
-      });
-    });
-  </script>
-</head>
-<body>
-    <a href="">Link</a>
+  <head>
+    <meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=0">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <title>Point-of-Interest Editor</title>
+    <style type="text/css">
+        .olControlAttribution { bottom: 0px!important }
+        #map {
+            height: 512px;
+        }
 
+        /* avoid pink tiles */
+        .olImageLoadError {
+            background-color: transparent !important;
+        }
+        div.olControlMousePosition {
+            bottom: 0em;
+            left: 3px;
+            display: block;
+            position: absolute;
+            font-family: Arial;
+            font-size: smaller;
+        }
+    </style>
 
-</body>
+    <script src="jslib/OpenLayers/OpenLayers.js"></script>
+
+    <script type="text/javascript">
+
+// code adapted from OpenLayers example. Comments are my own.
+// http://openlayers.org/dev/examples/spherical-mercator.html
+
+// make map available for easy debugging
+var map;
+
+// increase reload attempts
+OpenLayers.IMAGE_RELOAD_ATTEMPTS = 3;
+
+function init() {
+    // Extends over the whole earth. Bounds are half the earth circumfence in meters
+    var maxExtent = new OpenLayers.Bounds(-20037508, -20037508, 20037508, 20037508),
+        restrictedExtent = maxExtent.clone(),
+        // earth circumfence / 256px => 156543 m/px
+        maxResolution = 156543.0339;
+
+    var options = {
+        // spherical mercator (google) is used for projection
+        projection: new OpenLayers.Projection("EPSG:900913"),
+        // WGS84 is used for displayed coordinates
+        displayProjection: new OpenLayers.Projection("EPSG:4326"),
+        units: "m",
+        numZoomLevels: 18,
+        maxResolution: maxResolution,
+        maxExtent: maxExtent,
+        restrictedExtent: restrictedExtent
+    };
+    map = new OpenLayers.Map('map', options);
+
+    // create OSM layer
+    var mapnik = new OpenLayers.Layer.OSM();
+
+    // create OSM layer
+    var osmarender = new OpenLayers.Layer.OSM(
+        "OpenStreetMap (Tiles@Home)",
+        "http://tah.openstreetmap.org/Tiles/tile/${z}/${x}/${y}.png"
+    );
+
+    map.addLayers([mapnik, osmarender]);
+    map.addControl(new OpenLayers.Control.LayerSwitcher());
+    map.addControl(new OpenLayers.Control.Permalink());
+    map.addControl(new OpenLayers.Control.MousePosition());
+    // New York -73.98,40.69
+    var lonlat = new OpenLayers.LonLat(-73.98,40.69);
+    // OL does provide this transformation for EPSG:900913
+    lonlat.transform(map.displayProjection,map.baseLayer.projection);
+    map.setCenter(lonlat, 8);
+}
+
+    </script>
+  </head>
+  <body onload="init()">
+    <div id="map" class="smallmap"></div>
+  </body>
 </html>
+
+
+
