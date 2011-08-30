@@ -7,6 +7,9 @@ handlers:
 - url: /jslib
   static_dir: jslib
 
+- url: /icon/.*
+  script: epoicons.py
+
 - url: /epoiadmin
   script: epoiadmin.py
 

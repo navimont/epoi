@@ -7,5 +7,18 @@ Epoi Adminstration
 {% block content %}
     <h1>Point-of-Interest Editor Adminstration Page</h1>
     <h2>Relate icons to osm tags.</h2>
+
+    <table>
+    <tr>
+    {% for icon in icons %}
+      <td>
+      <img src="icon/{{icon}}" />
+      </td>
+      {% if forloop.counter|divisibleby:3 %}
+        </tr><tr>
+      {% endif %}
+    {% endfor %}
+    </tr>
+    </table>
 {% endblock %}
 

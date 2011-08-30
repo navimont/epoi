@@ -1,1 +1,11 @@
 EPOI - Editor for Openstreetmap Points of Interest (nodes)
+
+# On how to fetch data from remote server
+# and how to serve images from the datastore!
+http://code.google.com/appengine/articles/python/serving_dynamic_images.html
+
+# Mastering the datastore series of articles
+http://code.google.com/appengine/articles/datastore/overview.html
+
+# OpenLayers tips
+http://www.peterrobins.co.uk
