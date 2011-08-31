@@ -6,19 +6,26 @@ Epoi Adminstration
 
 {% block content %}
     <h1>Point-of-Interest Editor Adminstration Page</h1>
-    <h2>Relate icons to osm tags.</h2>
+    <h2>All epoi icons, their meaning and their relation to osm tags.</h2>
+    Click on the icon's title to change the osm_tags used to select it.
 
     <table>
-    <tr>
-    {% for icon in icons %}
-      <td>
-      <img src="icon/{{icon}}" />
-      </td>
-      {% if forloop.counter|divisibleby:3 %}
-        </tr><tr>
-      {% endif %}
+    {% for categ in categories %}
+        <tr>
+            <td><b>{{categ.0}}</b></td>
+        </tr>
+        {% for icon in categ.1 %}
+        <tr>
+            <td><a href='/epoiadmin/icon?id={{icon.id}}'>{{icon.name}}</a> </td>
+            <td><img src="/{{icon.file}}" /><td>
+            <td>
+                {% for tag in icon.osm_tags %}
+                    <li>{{ tag.k }}={{tag.v}}</li>
+                {% endfor %}
+            </td>
+        </tr>
+        {% endfor %}
     {% endfor %}
-    </tr>
     </table>
 {% endblock %}
 

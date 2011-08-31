@@ -10,7 +10,7 @@ handlers:
 - url: /icon/.*
   script: epoicons.py
 
-- url: /epoiadmin
+- url: /epoiadmin.*
   script: epoiadmin.py
 
 - url: /login
