@@ -87,7 +87,7 @@ class EpoiAdminPage(webapp.RequestHandler):
         categories = []
         # categorize icons based on their osm_tags
         # (an icon can be in more than one category)
-        osmtags = Osmtag.all()
+        osmtags = set([tag.v for tag in Osmtag.all()])
         for tag in osmtags:
             icon_with_tag = Epoicon.all()
             icon_with_tag.filter("osm_tags =", tag.key())
@@ -123,24 +123,58 @@ class EpoiAdminExportTags(webapp.RequestHandler):
         icons = []
         for epi in Epoicon.all():
             if len(epi.osm_tags):
-                icon = {'file': epi.file, 'name': epi.name, 'osm_tags': []}
+                icon = {'key': str(epi.key()), 'file': epi.file, 'name': epi.name, 'osm_tags': []}
                 for key in epi.osm_tags:
                     tag = Osmtag.get(key)
                     if tag:
-                        icon['osm_tags'].append((tag.k,tag.v))
+                        icon['osm_tags'].append({'key': str(tag.key()), 'k': tag.k, "v": tag.v})
                 icons.append(icon)
 
         self.response.headers['Content-Type'] = 'application/json'
-        self.response.out.write(json.dumps(icons))
+        self.response.out.write(json.dumps(icons, indent=2))
 
 
 
 class EpoiAdminImportTags(webapp.RequestHandler):
     """Import the relation between icons and osm tags (restore)"""
     def get(self):
-        # TODO implement
-        self.error(404)
-        return
+        file = self.request.get('file')
+        if not file:
+            logging.Error ("No 'file' in URL parameters")
+            self.error(500)
+            return
+
+        try:
+            fp = open(file,'r')
+        except IOError:
+            logging.Error ("Can't open backup file: %s" % (file))
+            self.error(500)
+            return
+
+        icons = json.load(fp)
+        for icon in icons:
+            # open icon file
+            try:
+                iconfp = open(os.path.join(icondir,icon['file']),'r')
+            except IOError:
+                logging.Error ("Can't open icon file: %s/%s" % (icondir,file))
+                self.error(500)
+                return
+            # instantiate icon object
+            epoicon = Epoicon(key=icon['key'], name=icon['name'], file=icon['file'], icon=iconfp.read())
+            iconfp.close()
+            epoicon.osm_tags = []
+            # add osm tag references
+            for tag in icon['osm_tags']:
+                osmtag = Osmtag(key=tag['key'], k=tag['k'], v=tag['v'])
+                # store relation but don't save duplicates in list either
+                if not osmtag.key() in epoicon.osm_tags:
+                    epoicon.osm_tags.append(osmtag.key())
+            epoicon.put()
+
+        fp.close()
+        self.redirect('/epoiadmin')
+
 
 class EpoiAdminEditIconPage(webapp.RequestHandler):
     """Manage relations between epoi icons and osm tags"""

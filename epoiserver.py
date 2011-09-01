@@ -175,6 +175,13 @@ def nineBoxes(lat,lon):
 
     return boxes
 
+def storeAmenities(osm):
+    """Retrieve all nodes and ways from the parsed OSM structure
+    and save the to the storage."""
+
+    for node in osm.nodes:
+        pass
+
 class EpoiServerTest(webapp.RequestHandler):
     """Runs a testfile through the parser. Call with filename as URL parameter"""
 
