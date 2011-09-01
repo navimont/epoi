@@ -13,6 +13,9 @@ handlers:
 - url: /epoiadmin.*
   script: epoiadmin.py
 
+- url: /epoiserver.*
+  script: epoiserver.py
+
 - url: /login
   script: epoiadmin.py
 

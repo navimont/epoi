@@ -31,15 +31,8 @@ class Epoi(geo.geomodel.GeoModel):
     name = db.StringProperty(required=True)
     # web address of the place
     web = db.LinkProperty()
-    # a list of icons (categories) which apply to the object.
+    # One or more icons (categories) which apply to the object.
     # Why more than one? The node may represent a hotel AND a restaurant
     epoicons = db.ListProperty(db.Key)
-
-class Epoi_ext(db.Expando):
-    """Extended properties for an epoi entity. It is defined
-    as a separate entity because I need to use GeoModel as a
-    base class for Epoi. GeoModel is based on db.Model .
-    When using extended properties (like name_es) the epoi
-    instance must be defined as the epoi_ext parent."""
-    # a list of pics of the place
-    pics = db.ListProperty(db.Blob)
+    # a pics of the place
+    pic = db.BlobProperty
