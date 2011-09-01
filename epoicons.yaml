@@ -1,0 +1,14 @@
+- 'Hotel ***':
+  - tourism: hotel
+  - stars: 3
+- 'Hotel':
+  - tourism: hotel
+- 'Sight':
+  - tourism: '*'
+- 'Japanese Restaurant':
+  - amenity: restaurant
+  - cuisine: japanese
+- 'Restaurant':
+  - amenity: restaurant
+- 'Cafe':
+  - amenity: cafe
