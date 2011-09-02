@@ -1,14 +1,87 @@
-- 'Hotel ***':
-  - tourism: hotel
-  - stars: 3
-- 'Hotel':
-  - tourism: hotel
-- 'Sight':
-  - tourism: '*'
-- 'Japanese Restaurant':
-  - amenity: restaurant
-  - cuisine: japanese
-- 'Restaurant':
-  - amenity: restaurant
-- 'Cafe':
-  - amenity: cafe
+# Defines the relations between OSM tags (key/value) and
+# epoi icons. Structure
+# -
+#   name: '<icon name>'
+#   name_fr: '<names in other languages>'
+#   tags: {key: value, [...]}
+#
+#   It is a list of entries for every icon. Each
+#   entry has one name and possibly more names
+#   in different languages.
+#   The tags dictionary key contains yet another
+#   nested dictionary with the osm key/value pairs.
+#
+# The order of entries is relevant as an icon
+# which fitted a list of tags will not be checked
+# against further tags (the most simple list of tags
+# is a single key/value pair)
+# An Asterisk (*) as a key's value represents all
+# possible values.
+
+-
+  name: 'Hotel ***'
+  name_fr: 'Hôtel ***'
+  tags: {tourism: hotel, stars: 3}
+-
+  name: 'Hotel'
+  tags: {tourism: hotel}
+-
+  name: 'Touristic'
+  tags: {tourism: '*'}
+-
+  name: 'Japanese Restaurant'
+  tags: {amenity: restaurant, cuisine: japanese}
+-
+  name: 'Restaurant'
+  tags: {amenity: restaurant}
+-
+  name: 'Cafe'
+  tags: {amenity: cafe}
+-
+  name: 'Amenity'
+  tags: {amenity: '*'}
+-
+  name: 'Leisure'
+  tags: {leisure: '*'}
+-
+  name: 'Public Transport'
+  tags: {public_transport: '*'}
+-
+  name: 'Office'
+  tags: {office: '*'}
+-
+  name: 'Shop'
+  tags: {shop: '*'}
+-
+  name: 'Craft'
+  tags: {craft: '*'}
+-
+  name: 'Emergency'
+  tags: {emergency: '*'}
+-
+  name: 'Historic'
+  tags: {historic: '*'}
+-
+  name: 'Sport'
+  tags: {sport: '*'}
+-
+  name: 'Lift Station'
+  tags: {aerialway: station}
+-
+  name: 'Airport'
+  tags: {aeroway: aerodrome}
+-
+  name: 'Airport Terminal'
+  tags: {aeroway: terminal}
+-
+  name: 'Railway Station'
+  tags: {railway: station}
+-
+  name: 'Railway Halt'
+  tags: {railway: halt}
+-
+  name: 'Tram Stop'
+  tags: {railway: tram_stop}
+-
+  name: 'Mooring'
+  tags: {mooring: yes}
