@@ -73,69 +73,34 @@ class EpoiAdminPage(webapp.RequestHandler):
             dbi.put()
         logging.debug ("%3d iconfiles imported:  %s" % (len(imported_icons),[",".join(imported_icons)]))
 
-        #
-        # Define data structure for the template
-        # categories = List of category/[epicon] tuples for the icons
-        # categories(1) ---- category string
-        # categories(2) ---- list of epoicons
-        #                      +-- name = clear text name (e.g. Hotel)
-        #                      +-- icon = png icon image
-        #                      +-+ osm_tags = a list of osm_tag key-value pairs
-        #                        +-- k
-        #                        +-- v
-        #
-        categories = []
-        # categorize icons based on their osm_tags
-        # (an icon can be in more than one category)
-        osmtags = set([tag.v for tag in Osmtag.all()])
-        for tag in osmtags:
-            icon_with_tag = Epoicon.all()
-            icon_with_tag.filter("osm_tags =", tag.key())
-            icons = []
-            for epi in icon_with_tag:
-                icons.append({'file': os.path.join('icon',epi.file),
-                             'id':str(epi.key()),
-                             'osm_tags': [Osmtag.get(key) for key in epi.osm_tags],
-                             'name':epi.name})
-            categories.append((tag.k, icons))
-
-        # find unused icons in the data storage
-        unused = []
+        icons = []
         for epi in Epoicon.all():
-            if len(epi.osm_tags) < 1:
-                unused.append({'file': os.path.join('icon',epi.file),
-                               'id':str(epi.key()),
-                               'osm_tags': [Osmtag.get(key) for key in epi.osm_tags],
-                               'name':epi.name})
-        categories.append(('not used', unused))
+            icons.append({'file': os.path.join('icon',epi.file),
+                          'id':str(epi.key()),
+                          'name':epi.name})
 
-        template_values['categories'] = categories
+        template_values['icons'] = icons
 
         # render administration page
         path = os.path.join(os.path.dirname(__file__), 'epoiadmin.html')
         self.response.out.write(template.render(path, template_values))
 
-class EpoiAdminExportTags(webapp.RequestHandler):
+class EpoiAdminExportIcons(webapp.RequestHandler):
     """Export the relation between icons and osm tags (backup)"""
     def get(self):
 
-        logging.info("preparing icons and osm tags for json export")
+        logging.info("preparing icons for json export")
         icons = []
         for epi in Epoicon.all():
-            if len(epi.osm_tags):
-                icon = {'key': str(epi.key()), 'file': epi.file, 'name': epi.name, 'osm_tags': []}
-                for key in epi.osm_tags:
-                    tag = Osmtag.get(key)
-                    if tag:
-                        icon['osm_tags'].append({'key': str(tag.key()), 'k': tag.k, "v": tag.v})
-                icons.append(icon)
+            icon = {'key': str(epi.key()), 'file': epi.file, 'name': epi.name}
+            icons.append(icon)
 
         self.response.headers['Content-Type'] = 'application/json'
         self.response.out.write(json.dumps(icons, indent=2))
 
 
 
-class EpoiAdminImportTags(webapp.RequestHandler):
+class EpoiAdminImportIcons(webapp.RequestHandler):
     """Import the relation between icons and osm tags (restore)"""
     def get(self):
         file = self.request.get('file')
@@ -158,18 +123,11 @@ class EpoiAdminImportTags(webapp.RequestHandler):
                 iconfp = open(os.path.join(icondir,icon['file']),'r')
             except IOError:
                 logging.Error ("Can't open icon file: %s/%s" % (icondir,file))
-                self.error(500)
-                return
+                continue
+
             # instantiate icon object
             epoicon = Epoicon(key=icon['key'], name=icon['name'], file=icon['file'], icon=iconfp.read())
             iconfp.close()
-            epoicon.osm_tags = []
-            # add osm tag references
-            for tag in icon['osm_tags']:
-                osmtag = Osmtag(key=tag['key'], k=tag['k'], v=tag['v'])
-                # store relation but don't save duplicates in list either
-                if not osmtag.key() in epoicon.osm_tags:
-                    epoicon.osm_tags.append(osmtag.key())
             epoicon.put()
 
         fp.close()
@@ -201,12 +159,10 @@ class EpoiAdminEditIconPage(webapp.RequestHandler):
             logging.error ('id parameter missing in URL')
             self.error(500)
             return
-        key = self.request.get('key')
-        value = self.request.get('value')
         action = self.request.get('action')
         name = self.request.get('name', None)
 
-        logging.debug ('id: %s (key: %s value: %s) action: %s' % (id,key,value,action))
+        logging.debug ('id: %s action: %s' % (id,action))
         epoicon = Epoicon.get(id)
         if not epoicon:
             self.error(500)
@@ -217,41 +173,15 @@ class EpoiAdminEditIconPage(webapp.RequestHandler):
             epoicon.name = name
             epoicon.put()
 
-        # store key/value pair if add was pressed
-        if (action == 'add' or action == 'done') and key and value:
-            # don't save duplicates in Osmtag entity
-            qosmtag = Osmtag.all()
-            qosmtag.filter('k =', key)
-            qosmtag.filter('v =', value)
-            osmtag = qosmtag.fetch(1)
-            if len(osmtag) < 1:
-                osmtag = Osmtag(k=key, v=value)
-                osmtag.put()
-            else:
-                osmtag = osmtag[0]
-            # store relation but don't save duplicates in list either
-            if not osmtag.key() in epoicon.osm_tags:
-                epoicon.osm_tags.append(osmtag.key())
-                epoicon.put()
-        elif action == 'delete':
-            # never delete the icon in the DB, this just means
-            # that all relations are deleted
-            epoicon.osm_tags = []
-            epoicon.put()
+        if action == 'delete':
+            epoicon.delete()
             # go back to icon list page
             self.redirect('/epoiadmin')
-        elif action.startswith('tagdelete'):
-            # get osmtag key from action string
-            key = action.split("_")[-1]
-            logging.debug("action tagdelete key: %s" % (key))
-            epoicon.osm_tags.remove(Key(key))
-            epoicon.put()
         elif action == 'clone':
             # clone icon definition
             epoicon1 = Epoicon(name=epoicon.name,
                               file=epoicon.file,
-                              icon=epoicon.icon,
-                              osm_tags=epoicon.osm_tags)
+                              icon=epoicon.icon)
             epoicon1.put()
         elif action == 'done':
             # go back to icon list page
@@ -259,21 +189,11 @@ class EpoiAdminEditIconPage(webapp.RequestHandler):
         else:
             pass
 
-
-        # retrieve osm tags
-        osmtags = []
-        for osmtag_key in epoicon.osm_tags:
-            osmtag = Osmtag.get(osmtag_key)
-            osmtags.append({'id': str(osmtag_key),
-                            'k': osmtag.k,
-                            'v': osmtag.v})
-
         icon = {'file': os.path.join('icon',epoicon.file),
                 'id': str(epoicon.key()),
                 'name':epoicon.name}
 
         template_values['icon'] = icon
-        template_values['osmtags'] = osmtags
 
         # render administration page
         path = os.path.join(os.path.dirname(__file__), 'epoiadminicon.html')
@@ -283,8 +203,8 @@ class EpoiAdminEditIconPage(webapp.RequestHandler):
 
 application = webapp.WSGIApplication([('/epoiadmin/icon.*', EpoiAdminEditIconPage),
                                       ('/epoiadmin', EpoiAdminPage),
-                                      ('/epoiadmin/importtags.*', EpoiAdminImportTags),
-                                      ('/epoiadmin/exporttags', EpoiAdminExportTags),
+                                      ('/epoiadmin/importicons.*', EpoiAdminImportIcons),
+                                      ('/epoiadmin/exporticons', EpoiAdminExportIcons),
                                       ('/login', LoginPage),
                                       ('/logout', LogoutPage)],debug=True)
 

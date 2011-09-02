@@ -3,91 +3,80 @@ import os
 import xml.sax
 import urllib2
 import geo.geotypes
+import yaml
 from epoidbm import Epoicon, Osmtag, Epoi
+from google.appengine.ext import db
 from google.appengine.ext import webapp
 from google.appengine.ext.webapp.util import run_wsgi_app
 
-TagsOfInterest = (
-    'amenity=*',
-    'leisure=*',
-    'office=*',
-    'shop=*',
-    'craft=*',
-    'emergency=*',
-    'tourism=*',
-    'historic=*',
-    'sport=*',
-    # to capture station nodes
-    'public_transport=*',
-    'railway=*',
-    'aerialway=*',
-    'railway=*',
-    'waterway=*'
-)
-
-class Node(object):
-    def __init__(self, attr, tags=None):
-        if not attr.get('id', None):
-            attr['id'] = str(IDFactory.id())
-        self.id = int(attr['id'])
-        self.lon = attr['lon']
-        self.lat = attr['lat']
-        self.version = int(attr.get('version','1'))
-        self.visible = attr.get('visible',None)
-        if tags:
-            self.tags = tags
-        else:
-            self.tags = {}
-
-class Way(object):
-    def __init__(self, attr, nodes=None, tags=None):
-        self.id = int(attr['id'])
-        self.version = int(attr.get('version','1'))
-        self.visible = attr.get('visible',None)
-
-        if nodes:
-            self.nodes = nodes
-        else:
-            self.nodes = []
-        if tags:
-            self.tags = tags
-        else:
-            self.tags = {}
+# Internal representation of epoicon.yaml file
+Tags2Epoi = []
+# all osm tags (key/value pairs) which are stored
+TagsOfInterest = []
+# same, but only the keys
+KeysOfInterest = []
 
 class OSMXMLFileParser(xml.sax.ContentHandler):
-    def __init__(self, containing_obj):
-        # the OSMXMLFile object is in containing_obj parameter
-        self.containing_obj = containing_obj
-
-        self.curr_node = None
-        self.curr_way = None
-        self.curr_relation = None
-        self.curr_osmattrs = None
+    def __init__(self):
+        logging.debug ("Keys of interest: %s" % (", ".join(KeysOfInterest)))
+        self.epoi = None
+        self.isPoi = False
 
     def startElement(self, name, attrs):
+        self.isPoi = False
         if name == 'node':
-            self.curr_node = Node(attr=attrs)
+            # look for existing entity
+            qepoi = Epoi.all()
+            qepoi.filter("osm_id =", long(attrs['id']))
+            self.epoi = qepoi.fetch(1)
+            if len(self.epoi) > 0:
+                self.epoi = self.epoi[0]
+                # node is already in storage. check version.
+                if self.epoi.version == int(attrs['version']):
+                    # unchanged, skip it
+                    self.epoi = None
+                    return
+            else:
+                # Create new entity.
+                self.epoi = Epoi(osm_id=long(attrs['id']), version=0, name="<no name>", location=db.GeoPt(0,0))
+            # Update existing or fill new entity.
+            # It will only be stored if we find the right tags (later)
+            self.epoi.location = db.GeoPt(float(attrs['lat']), float(attrs['lon']))
+            self.epoi.version = int(attrs['version'])
 
         elif name == 'way':
-            self.curr_way = Way(attr=attrs)
+            pass
 
         elif name == 'tag':
-            if self.curr_node:
-                self.curr_node.tags[attrs['k']] = attrs['v']
-            elif self.curr_way:
-                self.curr_way.tags[attrs['k']] = attrs['v']
-            elif self.curr_relation:
-                self.curr_relation.tags[attrs['k']] = attrs['v']
+            if self.epoi:
+                if attrs['k'] == 'name':
+                    self.epoi.name = attrs['v']
+                if attrs['k'] == 'web':
+                    self.epoi.web = attrs['v']
+                if attrs['k'] in KeysOfInterest:
+                    self.isPoi = True
+                    # find it in Osmtag table and add there if new
+                    qosmtag = Osmtag.all()
+                    qosmtag.filter("k =", attrs['k'])
+                    qosmtag.filter("v =", attrs['v'])
+                    osmtag = qosmtag.fetch(1)
+                    if len(osmtag) < 1:
+                        # store new osmtag
+                        osmtag = Osmtag(k=attrs['k'], v=attrs['v'])
+                        osmtag.put()
+                        logging.debug ("Stored osmtag %s=%s" % (attrs['k'], attrs['v']))
+                    else:
+                        osmtag = osmtag[0]
+                    # update reference in epoi entity
+                    if not (osmtag.key() in self.epoi.osm_tags):
+                        self.epoi.osm_tags.append(osmtag.key())
 
         elif name == "nd":
-            assert self.curr_node is None, "curr_node (%r) is non-none" % (self.curr_node)
-            assert self.curr_way is not None, "curr_way is None"
-            self.curr_way.nodes.append(attrs['ref'])
-
-        elif name == "osm":
-            self.curr_osmattrs = attrs
+            pass
 
         # not important for us
+        elif name == "osm":
+            pass
         elif name == "relation":
             pass
         elif name == "member":
@@ -99,47 +88,33 @@ class OSMXMLFileParser(xml.sax.ContentHandler):
 
 
     def endElement(self, name):
-
         if name == "node":
-            # write directly to the node dictionary of OSMXMLFile class
-            self.containing_obj.nodes[self.curr_node.id] = self.curr_node
-            self.curr_node = None
+            if self.epoi and self.isPoi:
+                # This is needed for GeoModel location cells update
+                self.epoi.update_location()
+                self.epoi.put()
+                logging.debug ("Stored epoi osm_id: %d name: %s" % (self.epoi.osm_id, self.epoi.name))
 
         elif name == "way":
-            self.containing_obj.ways[self.curr_way.id] = self.curr_way
-            self.curr_way = None
+            pass
 
         elif name == "relation":
             pass
-
         elif name == "osm":
-            self.containing_obj.osmattrs = self.curr_osmattrs
-            self.curr_osmtags = None
+            pass
+        else:
+            pass
 
-class OSMXMLFile(object):
+def parseOSMXMLFile(filename=None, content=None):
     """
     Use this class to load and parse OSM files.
     """
-    def __init__(self, filename=None, content=None):
-        self.filename = filename
+    handler = OSMXMLFileParser()
+    if content:
+        xml.sax.parseString(content, handler)
+    else:
+        xml.sax.parse(filename, handler)
 
-        # will be filled by OSMXMLFileParser node by node
-        # dic format: {nodeid: NODE, ...}
-        self.nodes = {}
-        self.ways = {}
-        self.osmattrs = {'version':'0.6'}
-        if filename:
-            self.__parse()
-        elif content:
-            self.__parse(content)
-
-    def __parse(self, content=None):
-        """Parse the given XML file"""
-        handler = OSMXMLFileParser(self)
-        if content:
-            xml.sax.parseString(content, handler)
-        else:
-            xml.sax.parse(self.filename, handler)
 
 def apiDownload(predicate=None,box=None):
     """
@@ -160,7 +135,7 @@ def apiDownload(predicate=None,box=None):
 
 def nineBoxes(lat,lon):
     """Calculate the bounding box wich incorporates the
-    lat lon coordinate and is aligned at a 0.04 deg grid.
+    lat lon coordinate and is aligned to a grid.
     Return this box and the eight surrounding boxes
     as geotype.Box class objects."""
     grid = 0.03
@@ -175,12 +150,11 @@ def nineBoxes(lat,lon):
 
     return boxes
 
-def storeAmenities(osm):
-    """Retrieve all nodes and ways from the parsed OSM structure
-    and save the to the storage."""
+def osmtagToEpoi(tags):
+    """Finds the right epoi icon for a list of key/value pairs"""
 
-    for node in osm.nodes:
-        pass
+    pass
+
 
 class EpoiServerTest(webapp.RequestHandler):
     """Runs a testfile through the parser. Call with filename as URL parameter"""
@@ -198,11 +172,11 @@ class EpoiServerTest(webapp.RequestHandler):
             self.error(404)
             return
 
-        osm = OSMXMLFile(filename=file)
+        parseOSMXMLFile(filename=file)
 
         self.response.out.write("<html><body>")
-        self.response.out.write("nodes: %d" % len(osm.nodes))
-        self.response.out.write("<br>ways: %d" % len(osm.ways))
+        for epoi in Epoi.all():
+            self.response.out.write("<br>osm id: %d name: %s osm_tags: %s" % (epoi.osm_id, epoi.name, ", ".join(["/".join((Osmtag.get(key).k,Osmtag.get(key).v)) for key in epoi.osm_tags])))
         self.response.out.write("<body><html>")
 
 
@@ -249,7 +223,33 @@ application = webapp.WSGIApplication([('/epoiserver', EpoiServerPopulate),
                                       ('/epoiserver/test.*', EpoiServerTest)])
 
 def main():
+    global TagsOfInterest, KeysOfInterest
     logging.getLogger().setLevel(logging.DEBUG)
+    # read and parse definition for osmtag to icon relation
+    filename = 'epoicons.yaml'
+    try:
+        fp = open(filename)
+    except IOError:
+        logging.Critical("Can't open file %s" %(filename))
+        fp = None
+    if fp:
+        try:
+            Tags2Epoi = yaml.load(fp)
+        except yaml.YAMLError, exc:
+            logging.Critical ("Error in configuration file: %s" (exc))
+            Tags2Epoi = []
+        fp.close()
+    # Extract all tags of interest from the configuration
+    tags = []
+    for icon in Tags2Epoi:
+        for key,value in icon['tags'].items():
+            tags.append("%s=%s" % (key, value))
+    # convert to set to remove duplicates
+    TagsOfInterest = set(tags)
+    KeysOfInterest = set([k.split('=')[0] for k in TagsOfInterest])
+    logging.debug ("Tags of interest: %s" % (", ".join(TagsOfInterest)))
+    logging.debug ("Keys of interest: %s" % (", ".join(KeysOfInterest)))
+
     run_wsgi_app(application)
 
 if __name__ == "__main__":

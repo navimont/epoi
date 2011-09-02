@@ -27,12 +27,6 @@ Epoi Icon Adminstration
           <td><img src="/{{ icon.file }}" /><td>
           <td colspan="2"><input name="name" type="text" size="40" maxlength="40" value="{{ icon.name }}"></td>
         </tr>
-        {% for tag in osmtags %}
-        <tr>
-            <td><a name="delete" href="javascript:void(0);" onClick="submitForm('tagdelete_{{tag.id}}');">Delete</a></td>
-            <td>{{ tag.k }}=</td><td>{{ tag.v }}</td>
-        </tr>
-        {% endfor %}
         <tr>
             <td><a name="add" href="javascript:void(0);" onClick="submitForm('add');">Add</a></td>
             <td><input name="key" type="text" size="12" maxlength="40"">=</td>

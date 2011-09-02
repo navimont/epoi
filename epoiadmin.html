@@ -10,22 +10,12 @@ Epoi Adminstration
     Click on the icon's title to change the osm_tags used to select it.
 
     <table border="1">
-    {% for categ in categories %}
-        <tr>
-            <td><b>{{categ.0}}</b></td>
-        </tr>
-        {% for icon in categ.1 %}
+        {% for icon in icons %}
         <tr>
             <td><a href='/epoiadmin/icon?id={{icon.id}}'>{{icon.name}}</a> </td>
             <td><img src="/{{icon.file}}" /><td>
-            <td>
-                {% for tag in icon.osm_tags %}
-                    <li>{{ tag.k }}={{tag.v}}</li>
-                {% endfor %}
-            </td>
         </tr>
         {% endfor %}
-    {% endfor %}
     </table>
 {% endblock %}
 
